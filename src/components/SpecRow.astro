@@ -1,0 +1,19 @@
+---
+interface Props {
+    label: string;
+    value: string;
+    isLast?: boolean;
+}
+
+const { label, value, isLast = false } = Astro.props;
+---
+
+<div
+    class:list={[
+        "flex justify-between py-3 border-b border-gray-100",
+        isLast && "border-b-0",
+    ]}
+>
+    <span class="text-gray-600 font-medium text-sm">{label}</span>
+    <span class="text-gray-900 text-sm">{value}</span>
+</div>

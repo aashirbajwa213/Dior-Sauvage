@@ -1,0 +1,382 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+import Pagination from "../../components/admin/Pagination.astro";
+
+const seoTitle = "Admin Products - Gionee Pakistan";
+
+const url = new URL(Astro.request.url);
+const search = url.searchParams.get("search") || "";
+
+const page = parseInt(url.searchParams.get("page") || "1");
+const limit = parseInt(url.searchParams.get("limit") || "20");
+const offset = (page - 1) * limit;
+
+const db = Astro.locals.runtime?.env?.DB;
+
+const sort = url.searchParams.get("sort") || "id_desc";
+
+let products: any[] = [];
+let errorMsg = "";
+let totalItems = 0;
+let totalPages = 0;
+let stats = {
+    totalProducts: 0,
+    avgPrice: 0,
+    totalPacks: 0,
+    totalReviews: 0,
+};
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml or start development using Astro proxy.";
+} else {
+    try {
+        // 0. Auto-migrate status column if it doesn't exist
+        try {
+            await db.prepare("ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'published'").run();
+        } catch (e) {
+            // Ignore if column already exists
+        }
+
+        if (Astro.request.method === "POST") {
+            try {
+                const formData = await Astro.request.formData();
+                const action = formData.get("action");
+                const productId = formData.get("product_id");
+                
+                if (action === "toggle_status" && productId) {
+                    const currentStatus = formData.get("current_status");
+                    const newStatus = currentStatus === "draft" ? "published" : "draft";
+                    await db.prepare("UPDATE products SET status = ? WHERE id = ?").bind(newStatus, productId).run();
+                } else if (action === "bulk_delete") {
+                    const productIdsRaw = formData.get("product_ids")?.toString();
+                    if (productIdsRaw) {
+                        const productIds = productIdsRaw.split(",").filter(id => id.trim() !== "");
+                        if (productIds.length > 0) {
+                            for (const id of productIds) {
+                                await db.prepare("DELETE FROM product_packs WHERE product_id = ?").bind(id).run();
+                                await db.prepare("DELETE FROM reviews WHERE product_id = ?").bind(id).run();
+                                await db.prepare("DELETE FROM products WHERE id = ?").bind(id).run();
+                            }
+                        }
+                    }
+                }
+            } catch (e: any) {
+                errorMsg = "Failed to update product status: " + e.message;
+            }
+        }
+
+        // 1. Fetch Stats
+        const productStats: any = await db.prepare(`
+            SELECT 
+                COUNT(*) as total_products, 
+                AVG(base_price) as avg_price
+            FROM products
+        `).first();
+
+        const packStats: any = await db.prepare(`
+            SELECT COUNT(*) as total_packs FROM product_packs
+        `).first();
+
+        const reviewStats: any = await db.prepare(`
+            SELECT COUNT(*) as total_reviews FROM reviews
+        `).first();
+        
+        stats.totalProducts = productStats?.total_products || 0;
+        stats.avgPrice = Math.round(productStats?.avg_price || 0);
+        stats.totalPacks = packStats?.total_packs || 0;
+        stats.totalReviews = reviewStats?.total_reviews || 0;
+
+        // 2. Count Total Items for Pagination
+        let countQuery = "SELECT COUNT(*) as count FROM products p";
+        let countParams: any[] = [];
+
+        if (search) {
+            countQuery += ` WHERE p.title LIKE ? OR p.slug LIKE ? OR p.description LIKE ?`;
+            const wildSearch = `%${search}%`;
+            countParams.push(wildSearch, wildSearch, wildSearch);
+        }
+
+        const countStmt = db.prepare(countQuery);
+        const countResult: any = countParams.length > 0 ? await countStmt.bind(...countParams).first() : await countStmt.first();
+        totalItems = countResult?.count || 0;
+        totalPages = Math.ceil(totalItems / limit);
+
+        // 3. Fetch Products
+        let query = `
+            SELECT 
+                p.*,
+                (SELECT COUNT(*) FROM product_packs WHERE product_id = p.id) as pack_count,
+                (SELECT COUNT(*) FROM reviews WHERE product_id = p.id) as review_count,
+                (SELECT AVG(rating) FROM reviews WHERE product_id = p.id) as avg_rating
+            FROM products p
+        `;
+        let params: any[] = [];
+
+        if (search) {
+            query += ` WHERE p.title LIKE ? OR p.slug LIKE ? OR p.description LIKE ?`;
+            const wildSearch = `%${search}%`;
+            params.push(wildSearch, wildSearch, wildSearch);
+        }
+
+        let orderBy = "p.id DESC";
+        if (sort === "id_asc") orderBy = "p.id ASC";
+
+        query += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+        params.push(limit, offset);
+
+        const stmt = db.prepare(query);
+        const { results } = await stmt.bind(...params).all();
+        products = results || [];
+
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+---
+
+<AdminLayout title={seoTitle} activePage="products">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+        <div>
+            <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">Products Catalog</h1>
+            <p class="text-gray-500 mt-1">Manage dynamic products, pricing packs, SEO metadata, and product page specifications.</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="/admin/products/new/" class="inline-flex items-center gap-2 py-2.5 px-5 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md text-sm transition-all shadow-sm active:scale-[0.98] hover:scale-[1.01]">
+                + Create Product
+            </a>
+        </div>
+    </div>
+
+
+
+    <!-- Error Banner -->
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-md mb-8 flex items-start gap-3">
+            <div class="bg-red-100 text-red-800 p-1 rounded-full shrink-0">⚠️</div>
+            <div>
+                <p class="font-semibold">System Status Warning</p>
+                <p class="text-sm mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Filter & Search Bar -->
+    <div class="bg-white p-4 rounded-lg border border-gray-100 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
+        <form method="GET" class="flex-1 grid md:grid-cols-4 gap-3">
+            <div class="relative md:col-span-3">
+                <input
+                    type="text"
+                    name="search"
+                    value={search}
+                    placeholder="Search products by Title, Slug, Description..."
+                    class="w-full pl-10 pr-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                />
+                <div class="absolute left-3.5 top-3.5 text-gray-400">
+                    <Icon name="search" class="w-4 h-4" />
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button type="submit" class="flex-1 py-2.5 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md text-sm transition-colors shadow-sm active:scale-[0.98]">
+                    Filter
+                </button>
+                {search && (
+                    <a href="/admin/products/" class="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-md text-sm transition-colors flex items-center justify-center" title="Clear filters">
+                        Reset
+                    </a>
+                )}
+            </div>
+        </form>
+    </div>
+
+    <!-- Products Table -->
+    <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="p-4 w-12 text-center">
+                            <input type="checkbox" id="selectAll" class="rounded border-gray-300 text-brand-orange focus:ring-brand-orange cursor-pointer w-4 h-4" />
+                        </th>
+                        <th class="p-4">
+                            <a href={`?sort=${sort === 'id_asc' ? 'id_desc' : 'id_asc'}${search ? '&search='+search : ''}`} class="flex items-center gap-1 hover:text-gray-900 transition-colors">
+                                ID {sort === 'id_asc' ? '↑' : sort === 'id_desc' ? '↓' : ''}
+                            </a>
+                        </th>
+                        <th class="p-4">Product Info</th>
+                        <th class="p-4">Slug</th>
+                        <th class="p-4">Base / Original Price</th>
+                        <th class="p-4">Bundles</th>
+                        <th class="p-4">Status</th>
+                        <th class="p-4 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-sm text-gray-800">
+                    {products.length === 0 ? (
+                        <tr>
+                            <td colspan="8" class="p-8 text-center text-gray-500">
+                                <div class="max-w-sm mx-auto flex flex-col items-center">
+                                    <div class="text-4xl mb-2">📦</div>
+                                    <p class="font-semibold text-gray-800">No Products Found</p>
+                                    <p class="text-xs text-gray-400 mt-1">There are no products in the catalog. Click "+ Create Product" to start building your catalog.</p>
+                                </div>
+                            </td>
+                        </tr>
+                    ) : (
+                        products.map((prod) => {
+                            let firstImage = "/favicon.svg";
+                            try {
+                                const parsed = JSON.parse(prod.images);
+                                if (Array.isArray(parsed) && parsed.length > 0) {
+                                    const firstItem = parsed[0];
+                                    firstImage = typeof firstItem === 'object' && firstItem !== null ? firstItem.url : firstItem;
+                                }
+                            } catch (e) {}
+
+                            return (
+                                <tr class="hover:bg-gray-50/50 transition-colors">
+                                    <td class="p-4 text-center">
+                                        <input type="checkbox" class="row-checkbox rounded border-gray-300 text-brand-orange focus:ring-brand-orange cursor-pointer w-4 h-4" value={prod.id} />
+                                    </td>
+                                    <td class="p-4 font-mono text-xs text-gray-500">
+                                        #{prod.id}
+                                    </td>
+                                    <td class="p-4">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-12 h-12 rounded bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0 flex items-center justify-center">
+                                                <img src={firstImage} alt={prod.title} class="w-full h-full object-cover" />
+                                            </div>
+                                            <div>
+                                                <div class="font-semibold text-gray-900">{prod.title}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td class="p-4 font-mono text-xs text-gray-600">
+                                        /{prod.slug}/
+                                    </td>
+                                    <td class="p-4">
+                                        <div class="font-semibold text-gray-900">PKR {prod.base_price.toLocaleString()}</div>
+                                        {prod.original_price && (
+                                            <div class="text-xs text-gray-400 line-through">PKR {prod.original_price.toLocaleString()}</div>
+                                        )}
+                                    </td>
+                                    <td class="p-4 font-semibold text-brand-orange">
+                                        {prod.pack_count} bundles
+                                    </td>
+                                    <td class="p-4">
+                                        <form method="POST" class="inline-block">
+                                            <input type="hidden" name="action" value="toggle_status" />
+                                            <input type="hidden" name="product_id" value={prod.id} />
+                                            <input type="hidden" name="current_status" value={prod.status} />
+                                            <button type="submit" class="focus:outline-none hover:opacity-80 transition-opacity" title="Click to toggle status">
+                                                {prod.status === 'draft' ? (
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 uppercase tracking-wider">
+                                                        Draft
+                                                    </span>
+                                                ) : (
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 uppercase tracking-wider">
+                                                        Published
+                                                    </span>
+                                                )}
+                                            </button>
+                                        </form>
+                                    </td>
+                                    <td class="p-4 text-right">
+                                        <div class="flex justify-end gap-2">
+                                            <a href={`/${prod.slug}/`} target="_blank" rel="noopener noreferrer" class="p-1.5 text-gray-400 hover:text-brand-orange hover:bg-orange-50 rounded transition-colors" title="Preview Product">
+                                                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                            </a>
+                                            <a href={`/admin/products/${prod.id}/`} class="p-1.5 text-gray-400 hover:text-brand-orange hover:bg-orange-50 rounded transition-colors" title="Manage Product">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })
+                    )}
+                </tbody>
+            </table>
+        </div>
+
+        {totalItems > 0 && (
+            <Pagination 
+                currentPage={page} 
+                totalPages={totalPages} 
+                totalItems={totalItems} 
+                limit={limit} 
+            />
+        )}
+    </div>
+    </div>
+
+    <!-- Bulk Action Bar -->
+    <div id="bulkActionBar" class="fixed bottom-0 left-0 right-0 md:left-64 bg-white border-t border-gray-200 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] p-4 flex items-center justify-between z-50 transform translate-y-full transition-transform duration-300">
+        <div class="flex items-center gap-4">
+            <span class="bg-brand-orange text-white font-bold px-3 py-1 rounded-full text-sm"><span id="selectedCount">0</span> Selected</span>
+            <span class="text-sm text-gray-500 font-medium hidden sm:inline">Bulk Actions:</span>
+        </div>
+        
+        <form method="POST" id="bulkForm" class="flex items-center gap-3">
+            <input type="hidden" name="action" id="bulkActionType" value="" />
+            <input type="hidden" name="product_ids" id="bulkProductIds" value="" />
+            
+            <button type="button" onclick="submitBulk('bulk_delete')" class="flex items-center gap-1.5 text-sm font-semibold text-rose-600 hover:text-rose-700 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Delete Selected
+            </button>
+        </form>
+    </div>
+
+    <script is:inline>
+        document.addEventListener('DOMContentLoaded', () => {
+            const selectAll = document.getElementById('selectAll');
+            const rowCheckboxes = document.querySelectorAll('.row-checkbox');
+            const bulkActionBar = document.getElementById('bulkActionBar');
+            const selectedCount = document.getElementById('selectedCount');
+            const bulkProductIds = document.getElementById('bulkProductIds');
+            const bulkActionType = document.getElementById('bulkActionType');
+            const bulkForm = document.getElementById('bulkForm');
+
+            function updateBulkActionUI() {
+                const selected = Array.from(rowCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+                if (selected.length > 0) {
+                    bulkActionBar.classList.remove('translate-y-full');
+                    bulkActionBar.classList.add('translate-y-0');
+                    selectedCount.textContent = selected.length;
+                    bulkProductIds.value = selected.join(',');
+                } else {
+                    bulkActionBar.classList.add('translate-y-full');
+                    bulkActionBar.classList.remove('translate-y-0');
+                }
+                
+                if (selectAll && rowCheckboxes.length > 0) {
+                    selectAll.checked = selected.length === rowCheckboxes.length;
+                }
+            }
+
+            if (selectAll) {
+                selectAll.addEventListener('change', (e) => {
+                    rowCheckboxes.forEach(cb => cb.checked = e.target.checked);
+                    updateBulkActionUI();
+                });
+            }
+
+            rowCheckboxes.forEach(cb => {
+                cb.addEventListener('change', updateBulkActionUI);
+            });
+
+            window.submitBulk = function(actionType) {
+                bulkActionType.value = actionType;
+                
+                if (actionType === 'bulk_delete') {
+                    if (!confirm('Are you sure you want to delete the selected products? This action cannot be undone and will delete all associated reviews and bundles.')) {
+                        return;
+                    }
+                }
+                
+                bulkForm.submit();
+            }
+        });
+    </script>
+</AdminLayout>

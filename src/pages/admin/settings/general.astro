@@ -1,0 +1,219 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import { getAllSettings, saveMultipleSettings } from "../../../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let successMsg = "";
+let settings: any = null;
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml.";
+} else {
+    try {
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "save_settings") {
+                const settingsToSave: Record<string, string> = {};
+
+                settingsToSave["delivery_charges"] = formData.get("delivery_charges")?.toString().trim() || "200";
+                settingsToSave["free_shipping_threshold"] = formData.get("free_shipping_threshold")?.toString().trim() || "2000";
+                settingsToSave["public_whatsapp_number"] = formData.get("public_whatsapp_number")?.toString().trim() || "923112390620";
+                settingsToSave["bi_logistics_cost"] = formData.get("bi_logistics_cost")?.toString().trim() || "260";
+                settingsToSave["current_monthly_ad_spend"] = formData.get("current_monthly_ad_spend")?.toString().trim() || "0";
+                settingsToSave["announcement_bar_enabled"] = formData.get("announcement_bar_enabled")?.toString().trim() || "0";
+                settingsToSave["announcement_bar_text"] = formData.get("announcement_bar_text")?.toString().trim() || "";
+                settingsToSave["smart_sticky_header_enabled"] = formData.get("smart_sticky_header_enabled")?.toString().trim() || "1";
+
+                const success = await saveMultipleSettings(db, settingsToSave);
+                if (success) {
+                    successMsg = "General settings saved successfully!";
+                } else {
+                    errorMsg = "Failed to save settings. Please try again.";
+                }
+            }
+        }
+
+        settings = await getAllSettings(db);
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+const seoTitle = "General Settings - Gionee Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="settings">
+    <div class="mb-8">
+        <h1 class="text-2xl font-bold text-gray-800 tracking-tight">General Settings</h1>
+        <p class="text-sm text-gray-500 mt-1">Configure global store settings including shipping rules and contact numbers.</p>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+            <div class="bg-red-100 text-red-800 p-1.5 rounded-full shrink-0">⚠️</div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {successMsg && (
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+            <div class="bg-emerald-100 text-emerald-800 p-1.5 rounded-full shrink-0">✓</div>
+            <div>
+                <p class="font-semibold text-sm text-emerald-800">Success</p>
+                <p class="text-xs mt-0.5 text-emerald-700">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {settings && (
+        <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+            <form method="POST" class="p-6 md:p-8 space-y-8">
+                <input type="hidden" name="action" value="save_settings" />
+
+                <div class="border-b border-gray-100 pb-6">
+                    <div class="mb-4">
+                        <h3 class="text-base font-semibold text-gray-800">Shipping Rules</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Define your default delivery fees and cart value thresholds for free shipping.</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Default Delivery Charges (PKR)</label>
+                            <input
+                                type="number"
+                                name="delivery_charges"
+                                value={settings.delivery_charges}
+                                placeholder="200"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1.5">Standard flat rate for all regular orders.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Free Shipping Threshold (PKR)</label>
+                            <input
+                                type="number"
+                                name="free_shipping_threshold"
+                                value={settings.free_shipping_threshold}
+                                placeholder="2000"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1.5">Cart value required to trigger automatic free shipping. Set to 0 to disable.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-b border-gray-100 pb-6">
+                    <div class="mb-4">
+                        <h3 class="text-base font-semibold text-gray-800">Contact Information</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Global contact details mapped across the frontend store.</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Public WhatsApp Number</label>
+                            <input
+                                type="text"
+                                name="public_whatsapp_number"
+                                value={settings.public_whatsapp_number}
+                                placeholder="923112390620"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1.5">Include country code (e.g. 923...). Used for 'Contact Us' buttons across the site.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-b border-gray-100 pb-6">
+                    <div class="mb-4">
+                        <h3 class="text-base font-semibold text-gray-800">Business Intelligence (BI) Metrics</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Internal metrics used to calculate true net profit in your BI Dashboard.</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Estimated Logistics Cost / Order <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-normal leading-none" title="Used for BI profit calculations">Internal</span></label>
+                            <input
+                                type="number"
+                                name="bi_logistics_cost"
+                                value={settings.bi_logistics_cost}
+                                placeholder="260"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1.5">Your average cost per shipped order (Courier + Flyer + Labor). Used to calculate net profits.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Total Ad Spend <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-normal leading-none" title="Used for BI profit calculations">Internal</span></label>
+                            <input
+                                type="number"
+                                name="current_monthly_ad_spend"
+                                value={settings.current_monthly_ad_spend}
+                                placeholder="50000"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1.5">Your total ad spend for the current reporting period. Deducted directly from your BI True Net Profit.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-b border-gray-100 pb-6">
+                    <div class="mb-4">
+                        <h3 class="text-base font-semibold text-gray-800">Header & Announcement</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Control the top announcement bar and header behavior.</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="md:col-span-2">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
+                                Enable Announcement Bar
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input type="checkbox" name="announcement_bar_enabled" value="1" class="sr-only peer" checked={settings.announcement_bar_enabled === '1'} />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-brand-orange transition-colors"></div>
+                                    <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                                </label>
+                            </label>
+                            <p class="text-[11px] text-gray-500 mb-3">Display a notice bar at the very top of the website.</p>
+                            
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Announcement Text</label>
+                            <input
+                                type="text"
+                                name="announcement_bar_text"
+                                value={settings.announcement_bar_text}
+                                placeholder="e.g., Free Shipping on all orders!"
+                                class="w-full text-sm border border-gray-200 rounded-md px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                        </div>
+
+                        <div class="md:col-span-2 border-t border-gray-50 pt-4 mt-2">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-2">
+                                Smart Sticky Header
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input type="checkbox" name="smart_sticky_header_enabled" value="1" class="sr-only peer" checked={settings.smart_sticky_header_enabled === '1'} />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-brand-orange transition-colors"></div>
+                                    <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                                </label>
+                            </label>
+                            <p class="text-[11px] text-gray-500">If enabled, the header hides when scrolling down to maximize screen space, and reappears instantly when scrolling up.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-2 flex justify-end gap-3">
+                    <button
+                        type="submit"
+                        class="bg-brand-orange text-white text-sm font-semibold px-6 py-2.5 rounded-md hover:bg-rose-600 focus:outline-none transition-colors shadow-sm cursor-pointer"
+                    >
+                        Save Configurations
+                    </button>
+                </div>
+            </form>
+        </div>
+    )}
+</AdminLayout>

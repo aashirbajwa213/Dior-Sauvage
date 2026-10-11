@@ -1,0 +1,175 @@
+---
+import Icon from "../ui/Icon.astro";
+
+export interface ColumnOption {
+    id: string;
+    label: string;
+    defaultVisible?: boolean;
+}
+
+export interface Props {
+    tableId: string;
+    storageKey: string;
+    columns: ColumnOption[];
+}
+
+const { tableId, storageKey, columns } = Astro.props;
+const selectorId = `col-sel-${tableId}`;
+---
+
+<div class="relative inline-block text-left" id={selectorId}>
+    <button
+        type="button"
+        id={`${selectorId}-btn`}
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 shadow-xs transition-colors cursor-pointer"
+        aria-haspopup="true"
+        aria-expanded="false"
+        title="Customize visible columns"
+    >
+        <Icon name="layout" class="w-3.5 h-3.5 text-gray-500" />
+        <span>Columns</span>
+        <Icon name="chevron-down" class="w-3 h-3 text-gray-400" />
+    </button>
+
+    <div
+        id={`${selectorId}-menu`}
+        class="hidden absolute right-0 mt-2 w-56 origin-top-right bg-white rounded-xl shadow-lg border border-gray-200 ring-1 ring-black/5 divide-y divide-gray-100 z-40 focus:outline-none animate-in fade-in duration-100"
+        role="menu"
+    >
+        <div class="px-3.5 py-2 flex items-center justify-between">
+            <span class="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Display Columns</span>
+            <button
+                type="button"
+                id={`${selectorId}-reset`}
+                class="text-[11px] text-brand-orange hover:underline font-semibold cursor-pointer"
+            >
+                Reset
+            </button>
+        </div>
+
+        <div class="p-2 space-y-1 max-h-64 overflow-y-auto" role="none">
+            {columns.map((col) => (
+                <label class="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-gray-50 text-xs text-gray-700 cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        data-col-toggle={col.id}
+                        class="rounded border-gray-300 text-brand-orange focus:ring-brand-orange h-3.5 w-3.5 cursor-pointer"
+                        checked={col.defaultVisible !== false}
+                    />
+                    <span class="flex-1 font-medium">{col.label}</span>
+                </label>
+            ))}
+        </div>
+    </div>
+</div>
+
+<script is:inline define:vars={{ selectorId, tableId, storageKey, columns }}>
+(function() {
+    const container = document.getElementById(selectorId);
+    if (!container) return;
+
+    const btn = document.getElementById(`${selectorId}-btn`);
+    const menu = document.getElementById(`${selectorId}-menu`);
+    const resetBtn = document.getElementById(`${selectorId}-reset`);
+    const checkboxes = menu ? menu.querySelectorAll('input[data-col-toggle]') : [];
+
+    function getSavedState() {
+        try {
+            const raw = localStorage.getItem(storageKey);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function saveState(state) {
+        try {
+            localStorage.setItem(storageKey, JSON.stringify(state));
+        } catch (e) {}
+    }
+
+    function applyColumnVisibility(colId, isVisible) {
+        const table = document.getElementById(tableId);
+        if (!table) return;
+
+        const cells = table.querySelectorAll(`[data-col="${colId}"]`);
+        cells.forEach(cell => {
+            if (isVisible) {
+                cell.classList.remove('hidden');
+                cell.style.display = '';
+            } else {
+                cell.classList.add('hidden');
+                cell.style.display = 'none';
+            }
+        });
+    }
+
+    function syncState() {
+        const saved = getSavedState() || {};
+        checkboxes.forEach(cb => {
+            const colId = cb.getAttribute('data-col-toggle');
+            const isVisible = saved[colId] !== undefined 
+                ? saved[colId] 
+                : (columns.find(c => c.id === colId)?.defaultVisible !== false);
+
+            cb.checked = isVisible;
+            applyColumnVisibility(colId, isVisible);
+        });
+    }
+
+    function toggleMenu(show) {
+        if (!menu || !btn) return;
+        const willShow = typeof show === 'boolean' ? show : menu.classList.contains('hidden');
+        if (willShow) {
+            menu.classList.remove('hidden');
+            btn.setAttribute('aria-expanded', 'true');
+        } else {
+            menu.classList.add('hidden');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    }
+
+    if (btn) {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleMenu();
+        });
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            try { localStorage.removeItem(storageKey); } catch (err) {}
+            syncState();
+        });
+    }
+
+    checkboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            const colId = cb.getAttribute('data-col-toggle');
+            const saved = getSavedState() || {};
+            saved[colId] = cb.checked;
+            saveState(saved);
+            applyColumnVisibility(colId, cb.checked);
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (menu && !menu.classList.contains('hidden') && !container.contains(e.target)) {
+            toggleMenu(false);
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && menu && !menu.classList.contains('hidden')) {
+            toggleMenu(false);
+        }
+    });
+
+    // Run immediately and on DOM load
+    syncState();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', syncState);
+    }
+})();
+</script>

@@ -1,0 +1,722 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import ProductGallery from "./ProductGallery.astro";
+import Price from "./ui/Price.astro";
+import Rating from "./ui/Rating.astro";
+import Button from "./ui/Button.astro";
+import Badge from "./ui/Badge.astro";
+import Icon from "./ui/Icon.astro";
+import SpecRow from "./SpecRow.astro";
+import { getAllSettings } from "../utils/settings";
+
+interface Props {
+    id?: number;
+    title: string;
+    price: number;
+    originalPrice: number;
+    description: string;
+    longDescription?: string;
+    images: (string | { url: string; alt: string })[];
+    specs: { label: string; value: string }[];
+    features: { title: string; description: string }[];
+    compatibility: string[];
+    faqs: { question: string; answer: string }[];
+    metaTitle: string;
+    metaDescription: string;
+    packs?: {
+        id: number;
+        product_id: number;
+        pack_label: string;
+        unit_count: number;
+        pack_price: number;
+        free_shipping: number;
+    }[];
+    reviews?: {
+        rating: number;
+        title: string;
+        text: string;
+        author: string;
+        location: string;
+    }[];
+    badge?: string;
+    reviewCount?: number;
+    rating?: number;
+}
+
+const {
+    id,
+    title,
+    price,
+    originalPrice,
+    description,
+    longDescription,
+    images,
+    specs,
+    features,
+    compatibility,
+    faqs,
+    metaTitle,
+    metaDescription,
+    packs = [],
+    reviews = [],
+    badge,
+    reviewCount = 1019,
+    rating = 4.8,
+} = Astro.props;
+
+// Calculate future date for priceValidUntil (e.g., 1 year from now)
+const nextYear = new Date();
+nextYear.setFullYear(nextYear.getFullYear() + 1);
+const priceValidUntil = nextYear.toISOString().split("T")[0];
+
+// Normalize images to extract URLs and altsMap
+const imageUrls: string[] = [];
+const altsMap: Record<string, string> = {};
+
+images.forEach(img => {
+    if (typeof img === "string") {
+        imageUrls.push(img);
+    } else if (img && typeof img === "object") {
+        imageUrls.push(img.url);
+        if (img.alt) {
+            altsMap[img.url] = img.alt;
+        }
+    }
+});
+
+// Prepare Usage & Suitability content (supports array of items or rich HTML string)
+const compatList: string[] = Array.isArray(compatibility)
+    ? compatibility
+    : (typeof compatibility === "string" ? [compatibility] : []);
+
+// Check if content contains block-level HTML tags
+const isSingleHtmlBlock = compatList.length === 1 && /<(p|div|ul|ol|li|table|h[1-6]|section|article|blockquote|br)\b[^>]*>/i.test(compatList[0]);
+const combinedCompatText = compatList.join("\n");
+const hasBlockHtml = isSingleHtmlBlock || /<(p|div|ul|ol|table|h[1-6]|blockquote)\b[^>]*>/i.test(combinedCompatText);
+
+// Helper to decode HTML entities if HTML was saved as escaped entities (&lt;p&gt; etc.)
+function cleanRenderHtml(raw: string = ""): string {
+    if (!raw) return "";
+    let str = raw;
+    if (str.includes("&lt;") && /&lt;(p|div|ul|ol|li|h[1-6]|strong|em|b|i|span|br)\b/i.test(str)) {
+        str = str.replace(/^<ol><li[^>]*><span[^>]*><\/span><span[^>]*>/i, "");
+        str = str.replace(/<\/span><\/li><\/ol>$/i, "");
+        str = str
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, "&");
+    }
+    return str;
+}
+
+const renderedShortDescription = cleanRenderHtml(description);
+const renderedLongDescription = cleanRenderHtml(longDescription || description);
+
+const schema = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    name: title,
+    description: description,
+    image: imageUrls,
+    sku: "DIOR-SAUVAGE-100ML",
+    mpn: "CD-SAUV-100ML",
+    brand: {
+        "@type": "Brand",
+        name: "Christian Dior",
+    },
+    offers: {
+        "@type": "Offer",
+        url: Astro.url.href,
+        priceCurrency: "PKR",
+        price: price,
+        priceValidUntil: priceValidUntil,
+        itemCondition: "https://schema.org/NewCondition",
+        availability: "https://schema.org/InStock",
+        seller: {
+            "@type": "Organization",
+            name: "Dior Sauvage Pakistan",
+        },
+        shippingDetails: {
+            "@type": "OfferShippingDetails",
+            shippingRate: {
+                "@type": "MonetaryAmount",
+                value: 0,
+                currency: "PKR",
+            },
+            shippingDestination: {
+                "@type": "DefinedRegion",
+                addressCountry: "PK",
+            },
+            deliveryTime: {
+                "@type": "ShippingDeliveryTime",
+                handlingTime: {
+                    "@type": "QuantitativeValue",
+                    minValue: 0,
+                    maxValue: 1,
+                    unitCode: "d",
+                },
+                transitTime: {
+                    "@type": "QuantitativeValue",
+                    minValue: 2,
+                    maxValue: 4,
+                    unitCode: "d",
+                },
+            },
+        },
+        hasMerchantReturnPolicy: {
+            "@type": "MerchantReturnPolicy",
+            applicableCountry: "PK",
+            returnPolicyCategory:
+                "https://schema.org/MerchantReturnFiniteReturnWindow",
+            merchantReturnDays: 7,
+            returnMethod: "https://schema.org/ReturnByMail",
+            returnFees: "https://schema.org/FreeReturn",
+        },
+    },
+    aggregateRating: {
+        "@type": "AggregateRating",
+        ratingValue: String(rating),
+        ratingCount: String(reviewCount),
+    },
+    review: reviews.map((review) => ({
+        "@type": "Review",
+        reviewRating: {
+            "@type": "Rating",
+            ratingValue: review.rating,
+            bestRating: "5",
+        },
+        author: {
+            "@type": "Person",
+            name: review.author,
+        },
+        reviewBody: review.text,
+    })),
+};
+
+const db = Astro.locals.runtime?.env?.DB;
+let whatsappNumber = "923112390620";
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        if (settings.public_whatsapp_number) {
+            whatsappNumber = settings.public_whatsapp_number;
+        }
+    } catch (e) {
+        console.error("Failed to load settings in ProductDetail", e);
+    }
+}
+---
+
+<MainLayout
+    title={metaTitle}
+    description={metaDescription}
+    schema={schema}
+    schemaData={{ faqs }}
+    image={imageUrls[0]}
+>
+    {/* Breadcrumb would go here */}
+
+
+
+    <div id="hero-section-wrapper" class="bg-white border-b border-gray-100">
+        <div class="container mx-auto px-4 max-w-6xl pt-4 pb-8 lg:py-10">
+        <div class="flex flex-col lg:flex-row gap-6 lg:gap-12">
+            {/* Gallery Side */}
+            <div class="lg:w-1/2 flex items-stretch">
+                <ProductGallery images={imageUrls} alt={title} badge={badge} altsMap={altsMap} />
+            </div>
+
+            {/* Info Side */}
+            <div class="lg:w-1/2 flex flex-col justify-center gap-4">
+                <div>
+                    <h1 class="text-2xl lg:text-3xl font-bold text-black tracking-tight mb-3">
+                        {title.includes("Dior Sauvage") ? (
+                            <>
+                                <span class="text-[#02274F]">Dior Sauvage</span>
+                                {title.replace("Dior Sauvage", "")}
+                            </>
+                        ) : (
+                            title
+                        )}
+                    </h1>
+                    <div class="flex items-center justify-between w-full">
+                        <div class="flex-1 pr-4">
+                            <Price
+                                price={price}
+                                originalPrice={originalPrice}
+                                size="3xl"
+                                class="text-brand-orange"
+                            />
+                        </div>
+                        <div class="h-10 w-px bg-gray-200"></div>
+                        <div class="flex-1 pl-4 flex flex-col items-end justify-center gap-1">
+                            <div class="flex items-center gap-1.5 text-green-600 text-[11px] font-semibold">
+                                <Icon name="badge-check" class="w-3.5 h-3.5" />
+                                <span>Verified Reviews</span>
+                            </div>
+                            <Rating rating={rating} count={reviewCount} size="sm" />
+                        </div>
+                    </div>
+                </div>
+
+                <p class="text-[13px] sm:text-sm text-gray-500 leading-normal" set:html={renderedShortDescription}>
+                </p>
+
+                <!-- Pack Selection -->
+                <div id="pack-options-section" class="scroll-mt-24">
+                    <div class="flex items-center justify-between mb-3">
+                        <label class="block text-sm font-medium text-gray-700">Select Pack Size</label>
+                        <span class="text-xs font-bold text-red-700 animate-pulse bg-red-50 px-2 py-1 rounded-md">
+                            🔥 In Stock
+                        </span>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-2">
+                        {
+                            (packs.length > 0 ? packs : [
+                                { id: -1, pack_label: "Single Pack", unit_count: 1, pack_price: price, free_shipping: 1 },
+                                { id: -2, pack_label: "Duo Pack", unit_count: 2, pack_price: 8499, free_shipping: 1 },
+                                { id: -3, pack_label: "Trio Pack", unit_count: 3, pack_price: 11999, free_shipping: 1 },
+                            ]).map((pack, index) => {
+                                return (
+                                    <button
+                                        class:list={[
+                                            "pack-option relative overflow-hidden border-2 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer",
+                                            pack.free_shipping === 1 ? "pt-7 pb-2.5 px-2.5 animate-shine-box" : "p-2.5",
+                                            index === 0 
+                                                ? "bg-blue-50/30 border-[#02274F] text-[#02274F] shadow-sm" 
+                                                : "bg-white border-gray-100 hover:border-[#02274F]/50 hover:shadow-sm text-gray-700 shadow-sm"
+                                        ]}
+                                        data-pack-id={pack.id}
+                                        data-qty={pack.unit_count}
+                                        data-label={pack.pack_label}
+                                        data-price={pack.pack_price}
+                                    >
+                                        {pack.free_shipping === 1 && (
+                                            <div class="absolute w-full top-0 inset-x-0 bg-emerald-700 text-white text-[10px] py-[3px] font-bold uppercase tracking-wider text-center z-10">
+                                                Free Shipping
+                                            </div>
+                                        )}
+                                        <span class="font-bold text-sm leading-tight text-center">{pack.pack_label}</span>
+                                        <span class="text-xs mt-0.5 opacity-100 font-semibold tracking-tight text-[#02274F]">PKR {pack.pack_price.toLocaleString()}</span>
+                                    </button>
+                                );
+                            })
+                        }
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-1.5 sm:gap-3 w-full">
+                    <div id="atc-wrapper" class="w-full sm:w-1/2 min-h-[3rem] min-w-0">
+                    <button
+                        id="add-to-cart-main"
+                        class="w-full min-h-[3rem] h-auto text-sm sm:text-[15px] py-3 px-3 sm:px-4 bg-brand-orange text-white font-semibold rounded-xl hover:bg-brand-orange/90 transition flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm hover:shadow-md active:scale-[0.98] overflow-hidden"
+                        data-id={title.toLowerCase().replace(/\s+/g, "-")}
+                        data-name={title}
+                        data-price={price}
+                        data-image={imageUrls[0]}
+                        data-slug={Astro.url.pathname}
+                        data-product-id={id}
+                        data-pack-id={packs.length > 0 ? packs[0].id : -1}
+                        data-pack-size={packs.length > 0 ? packs[0].unit_count : 1}
+                        data-pack-label={packs.length > 0 ? packs[0].pack_label : "Single"}
+                        data-pack-price={packs.length > 0 ? packs[0].pack_price : price}
+                    >
+                        <Icon name="shopping-cart" class="w-5 h-5 shrink-0" />
+                        <span id="atc-text" class="truncate">Add to Cart - Rs. {(packs.length > 0 ? packs[0].pack_price : price).toLocaleString()}</span>
+                    </button>
+                    </div>
+                    <a
+                        href={`https://wa.me/${whatsappNumber}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="w-full sm:w-1/2 text-sm sm:text-[15px] min-h-[3rem] h-auto py-3 px-3 sm:px-4 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all flex items-center justify-center gap-1.5 sm:gap-2 shadow-sm hover:shadow-md active:scale-[0.98] text-center min-w-0 overflow-hidden"
+                    >
+                        <Icon name="message-circle" class="w-5 h-5 shrink-0" />
+                        <span class="truncate">Order on WhatsApp</span>
+                    </a>
+                </div>
+
+                <script>
+                    import { addToCart } from "../stores/cart";
+
+                    const btn = document.getElementById("add-to-cart-main");
+                    const atcText = document.getElementById("atc-text");
+                    const packOptions = document.querySelectorAll<HTMLElement>(".pack-option");
+                    
+                    let selectedQty = packOptions[0] ? Number(packOptions[0].dataset.qty) : 1;
+                    let selectedPackId = packOptions[0] ? Number(packOptions[0].dataset.packId) : -1;
+                    let selectedPackLabel = packOptions[0] ? packOptions[0].dataset.label : "Single Pack";
+                    let selectedPrice = packOptions[0] ? Number(packOptions[0].dataset.price) : Number(btn?.dataset.price || 0);
+
+                    // Pack Selection Logic
+                    packOptions.forEach((option) => {
+                        option.addEventListener("click", () => {
+                            // Reset classes
+                            packOptions.forEach((opt) => {
+                                opt.classList.remove("bg-blue-50/30", "border-[#02274F]", "text-[#02274F]");
+                                opt.classList.add("bg-white", "border-gray-100", "text-gray-700");
+                            });
+
+                            // Set Active class
+                            option.classList.remove("bg-white", "border-gray-100", "text-gray-700");
+                            option.classList.add("bg-blue-50/30", "border-[#02274F]", "text-[#02274F]");
+
+                            // Update logic
+                            selectedQty = Number(option.dataset.qty);
+                            selectedPackId = Number(option.dataset.packId);
+                            selectedPackLabel = option.dataset.label!;
+                            selectedPrice = Number(option.dataset.price);
+
+                            // Update button dataset attributes
+                            if (btn) {
+                                btn.dataset.packId = String(selectedPackId);
+                                btn.dataset.packSize = String(selectedQty);
+                                btn.dataset.packLabel = selectedPackLabel;
+                                btn.dataset.packPrice = String(selectedPrice);
+                            }
+
+                            // Update Button Text
+                            if (atcText) {
+                                atcText.textContent = `Add to Cart - Rs. ${selectedPrice.toLocaleString()}`;
+                            }
+                        });
+                    });
+
+                    btn?.addEventListener("click", (e) => {
+                        const productId = btn.dataset.productId ? Number(btn.dataset.productId) : undefined;
+                        const packId = btn.dataset.packId ? Number(btn.dataset.packId) : undefined;
+                        const packSize = btn.dataset.packSize ? Number(btn.dataset.packSize) : selectedQty;
+                        const packLabel = btn.dataset.packLabel || selectedPackLabel;
+                        const packPrice = btn.dataset.packPrice ? Number(btn.dataset.packPrice) : selectedPrice;
+
+                        const isPack = packSize > 1;
+                        let finalName = btn.dataset.name!;
+                        let finalId = btn.dataset.id!;
+
+                        if (isPack) {
+                            finalName = `${finalName} - ${packLabel}`;
+                            finalId = `${finalId}-pack-${packSize}`;
+                        }
+
+                        const item = {
+                            id: finalId,
+                            name: finalName,
+                            price: packPrice,
+                            image: btn.dataset.image!,
+                            slug: btn.dataset.slug!,
+                            quantity: 1, // Always 1 "Pack"
+                            packSize: packSize, // Store real unit count
+                            productId: productId,
+                            packId: packId,
+                        };
+                        addToCart(item);
+
+                        // Meta Pixel AddToCart Event
+                        if (typeof window !== 'undefined' && window.fbq) {
+                            window.fbq('track', 'AddToCart', {
+                                content_ids: [productId || finalId],
+                                content_type: 'product',
+                                content_name: finalName,
+                                value: packPrice,
+                                currency: 'PKR'
+                            });
+                        }
+
+                        // GA4 / GTM AddToCart Event
+                        if (typeof window !== 'undefined') {
+                            window.dataLayer = window.dataLayer || [];
+                            window.dataLayer.push({
+                                event: 'add_to_cart',
+                                ecommerce: {
+                                    currency: 'PKR',
+                                    value: packPrice,
+                                    items: [{
+                                        item_id: productId || finalId,
+                                        item_name: finalName,
+                                        price: packPrice,
+                                        quantity: 1
+                                    }]
+                                }
+                            });
+                        }
+
+                        // Visual feedback safely
+                        const originalContent = btn.innerHTML;
+                        btn.innerHTML =
+                            '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span id="atc-text">Added to Cart</span>';
+                        btn.classList.add("bg-green-600");
+                        btn.classList.remove("bg-brand-orange");
+
+                        setTimeout(() => {
+                            btn.innerHTML = originalContent;
+                            btn.classList.remove("bg-green-600");
+                            btn.classList.add("bg-brand-orange");
+                            // Rehydrate the text
+                            const reText = document.getElementById("atc-text");
+                            if (reText) {
+                                reText.textContent = `Add to Cart - Rs. ${selectedPrice.toLocaleString()}`;
+                            }
+                        }, 2000);
+                    });
+                </script>
+
+            </div>
+        </div>
+    </div>
+
+    {/* Product Features Strip */}
+    {features && features.length > 0 && (
+        <div class="bg-slate-50 border-y border-slate-100/80 mt-4 md:mt-0">
+            <div class="container mx-auto px-4 max-w-6xl">
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 py-6 lg:py-8">
+                    {features.map((feature) => (
+                        <div class="flex items-start gap-3">
+                            <Icon name="badge-check" class="w-6 h-6 text-brand-orange shrink-0 mt-0.5" />
+                            <div class="flex flex-col">
+                                <span class="font-semibold text-gray-900 text-sm leading-tight">{feature.title}</span>
+                                {feature.description && (
+                                    <span class="text-xs text-gray-500 leading-tight mt-0.5">{feature.description}</span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    )}
+
+    {/* Detailed Sections (Accordion Redesign) */}
+    <div class="bg-white py-8 lg:py-10 border-t border-gray-100">
+        <div class="container mx-auto px-4 max-w-6xl">
+            <div class="space-y-0">
+                {/* 1. Description Accordion */}
+                <div class="accordion-item border-b border-gray-100 py-3">
+                    <button 
+                        class="accordion-header flex items-center w-full text-left py-2 gap-4 md:gap-5 group cursor-pointer focus:outline-none" 
+                        aria-expanded="true"
+                    >
+                        <svg class="accordion-arrow w-6 h-6 md:w-8 md:h-8 shrink-0 text-brand-orange transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M7 17L17 7M17 7H7M17 7V17" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <h2 class="font-semibold text-gray-900 tracking-wide text-lg sm:text-xl md:text-2xl lg:text-3xl uppercase">Product Description</h2>
+                    </button>
+                    <div class="accordion-content transition-all duration-300 ease-in-out overflow-hidden" style="max-height: none;">
+                        <div class="pt-2 pb-4 text-gray-600 text-sm sm:text-base leading-relaxed space-y-4 pr-6 pl-2 md:pl-[52px] prose prose-sm max-w-none">
+                            <Fragment set:html={renderedLongDescription} />
+                        </div>
+                    </div>
+                </div>
+
+                {/* 2. Specifications Accordion */}
+                <div class="accordion-item border-b border-gray-100 py-3">
+                    <button 
+                        class="accordion-header flex items-center w-full text-left py-2 gap-4 md:gap-5 group cursor-pointer focus:outline-none" 
+                        aria-expanded="false"
+                    >
+                        <svg class="accordion-arrow w-6 h-6 md:w-8 md:h-8 shrink-0 text-gray-400 rotate-90 transform transition-transform duration-300 group-hover:text-brand-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M7 17L17 7M17 7H7M17 7V17" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <h2 class="font-semibold text-gray-900 tracking-wide text-lg sm:text-xl md:text-2xl lg:text-3xl uppercase">Specifications</h2>
+                    </button>
+                    <div class="accordion-content transition-all duration-300 ease-in-out overflow-hidden" style="max-height: 0px;">
+                        <div class="pt-2 pb-4 pr-6 pl-2 md:pl-[52px]">
+                            <div class="space-y-2">
+                                {
+                                    specs.map((spec, index) => (
+                                        <SpecRow
+                                            label={spec.label}
+                                            value={spec.value}
+                                            isLast={index === specs.length - 1}
+                                        />
+                                    ))
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. Usage & Suitability Accordion */}
+                {compatList && compatList.length > 0 && (
+                    <div class="accordion-item border-b border-gray-100 py-3">
+                        <button 
+                            class="accordion-header flex items-center w-full text-left py-2 gap-4 md:gap-5 group cursor-pointer focus:outline-none" 
+                            aria-expanded="false"
+                        >
+                            <svg class="accordion-arrow w-6 h-6 md:w-8 md:h-8 shrink-0 text-gray-400 rotate-90 transform transition-transform duration-300 group-hover:text-brand-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path d="M7 17L17 7M17 7H7M17 7V17" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <h2 class="font-semibold text-gray-900 tracking-wide text-lg sm:text-xl md:text-2xl lg:text-3xl uppercase">Usage & Suitability</h2>
+                        </button>
+                        <div class="accordion-content transition-all duration-300 ease-in-out overflow-hidden" style="max-height: 0px;">
+                            <div class="pt-2 pb-4 pr-6 pl-2 md:pl-[52px]">
+                                {hasBlockHtml ? (
+                                    <div class="prose prose-sm max-w-none text-gray-700 leading-relaxed text-sm sm:text-base space-y-3" set:html={isSingleHtmlBlock ? compatList[0] : combinedCompatText} />
+                                ) : (
+                                    <ul class="space-y-3">
+                                        {
+                                            compatList.map((item) => (
+                                                <li class="flex items-start gap-3">
+                                                    <Icon
+                                                        name="check"
+                                                        class="w-5 h-5 text-green-500 mt-0.5 shrink-0"
+                                                    />
+                                                    <span class="text-gray-700 text-sm sm:text-base leading-relaxed" set:html={item} />
+                                                </li>
+                                            ))
+                                        }
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 4. Frequently Asked Questions Accordion */}
+                <div class="accordion-item border-b border-gray-100 py-3 last:border-b-0">
+                    <button 
+                        class="accordion-header flex items-center w-full text-left py-2 gap-4 md:gap-5 group cursor-pointer focus:outline-none" 
+                        aria-expanded="false"
+                    >
+                        <svg class="accordion-arrow w-6 h-6 md:w-8 md:h-8 shrink-0 text-gray-400 rotate-90 transform transition-transform duration-300 group-hover:text-brand-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path d="M7 17L17 7M17 7H7M17 7V17" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <h2 class="font-semibold text-gray-900 tracking-wide text-lg sm:text-xl md:text-2xl lg:text-3xl uppercase">Frequently Asked Questions</h2>
+                    </button>
+                    <div class="accordion-content transition-all duration-300 ease-in-out overflow-hidden" style="max-height: 0px;">
+                        <div class="pt-2 pb-4 pr-6 pl-2 md:pl-[52px]">
+                            <div class="space-y-6">
+                                {
+                                    faqs && faqs.map((faq) => (
+                                        <div class="border-b border-gray-100 pb-4 last:border-b-0 last:pb-0">
+                                            <h3 class="font-semibold text-gray-900 text-base sm:text-lg mb-2">{faq.question}</h3>
+                                            <p class="text-gray-600 text-sm sm:text-base leading-relaxed">{faq.answer}</p>
+                                        </div>
+                                    ))
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const items = document.querySelectorAll(".accordion-item");
+
+        // Initialize open item max-heights
+        items.forEach(item => {
+            const header = item.querySelector(".accordion-header");
+            const content = item.querySelector(".accordion-content") as HTMLElement;
+            if (header && content) {
+                if (header.getAttribute("aria-expanded") === "true") {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                } else {
+                    content.style.maxHeight = "0px";
+                }
+            }
+        });
+
+        // Watch resize to update open heights
+        window.addEventListener("resize", () => {
+            items.forEach(item => {
+                const header = item.querySelector(".accordion-header");
+                const content = item.querySelector(".accordion-content") as HTMLElement;
+                if (header && content && header.getAttribute("aria-expanded") === "true") {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                }
+            });
+        });
+
+        items.forEach(item => {
+            const header = item.querySelector(".accordion-header");
+            const content = item.querySelector(".accordion-content") as HTMLElement;
+            const arrow = item.querySelector(".accordion-arrow");
+            
+            if (header && content && arrow) {
+                header.addEventListener("click", () => {
+                    const isExpanded = header.getAttribute("aria-expanded") === "true";
+                    
+                    // Collapse all items
+                    items.forEach(otherItem => {
+                        const otherHeader = otherItem.querySelector(".accordion-header");
+                        const otherContent = otherItem.querySelector(".accordion-content") as HTMLElement;
+                        const otherArrow = otherItem.querySelector(".accordion-arrow");
+                        
+                        if (otherHeader && otherContent && otherArrow) {
+                            otherHeader.setAttribute("aria-expanded", "false");
+                            otherContent.style.maxHeight = "0px";
+                            otherArrow.classList.remove("rotate-0", "text-brand-orange");
+                            otherArrow.classList.add("rotate-90", "text-gray-400");
+                        }
+                    });
+                    
+                    // If not already expanded, expand this item
+                    if (!isExpanded) {
+                        header.setAttribute("aria-expanded", "true");
+                        content.style.maxHeight = content.scrollHeight + "px";
+                        arrow.classList.remove("rotate-90", "text-gray-400");
+                        arrow.classList.add("rotate-0", "text-brand-orange");
+                    }
+                });
+            }
+        });
+    </script>
+
+
+
+
+
+    <!-- Meta Pixel ViewContent Event -->
+    <script is:inline define:vars={{ id, title, price }}>
+        if (typeof window !== 'undefined' && window.fbq) {
+            window.fbq('track', 'ViewContent', {
+                content_ids: [id || title],
+                content_type: 'product',
+                content_name: title,
+                value: price,
+                currency: 'PKR'
+            });
+        }
+    </script>
+
+    {/* Slot for additional content like Reviews */}
+    <slot />
+</MainLayout>
+
+<style is:global>
+    /* Premium style refinements for Accordion detailed descriptions */
+    .accordion-content strong,
+    .accordion-content b {
+        font-weight: 600 !important;
+        color: #111827;
+    }
+    .accordion-content h3 {
+        font-weight: 600 !important;
+        font-size: 1.125rem !important; /* text-lg */
+        color: #111827;
+    }
+</style>
+
+<script is:inline define:vars={{ productId: id || title, productName: title, productPrice: price }}>
+    // GA4 view_item event
+    if (typeof window !== 'undefined') {
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({
+            event: "view_item",
+            ecommerce: {
+                currency: "PKR",
+                value: productPrice,
+                items: [{
+                    item_id: productId,
+                    item_name: productName,
+                    price: productPrice,
+                    quantity: 1
+                }]
+            }
+        });
+    }
+</script>

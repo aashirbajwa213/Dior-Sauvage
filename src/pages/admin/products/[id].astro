@@ -1,0 +1,1699 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+
+// Quill Rich Text Editor CSS/JS for Admin UI
+const quillHead = `
+<link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
+`;
+
+const { id } = Astro.params;
+
+const db = Astro.locals.runtime?.env?.DB;
+const url = new URL(Astro.request.url);
+
+let product: any = null;
+let productPacks: any[] = [];
+let productReviews: any[] = [];
+let successMsg = "";
+let errorMsg = "";
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml or start development using Astro proxy.";
+} else {
+    // 1. Process Form POST Request
+    if (Astro.request.method === "POST") {
+        try {
+            const formData = await Astro.request.formData();
+            const actionType = formData.get("action_type")?.toString();
+
+            // Handle Product Deletion
+            if (actionType === "delete" && id !== "new") {
+                await db.prepare("DELETE FROM products WHERE id = ?").bind(id).run();
+                return Astro.redirect("/admin/products/");
+            }
+
+            // Otherwise, process SAVE / UPDATE
+            const slug = formData.get("slug")?.toString().trim() || "";
+            const title = formData.get("title")?.toString().trim() || "";
+            const base_price = parseFloat(formData.get("base_price")?.toString() || "0");
+            const cost_price = parseFloat(formData.get("cost_price")?.toString() || "0");
+            const original_price_val = formData.get("original_price")?.toString().trim();
+            const original_price = original_price_val ? parseFloat(original_price_val) : null;
+            const badge = formData.get("badge")?.toString().trim() || null;
+            const description = formData.get("description")?.toString().trim() || "";
+            const long_description = formData.get("long_description")?.toString().trim() || "";
+            const meta_title = formData.get("meta_title")?.toString().trim() || "";
+            const meta_description = formData.get("meta_description")?.toString().trim() || "";
+            const review_count = parseInt(formData.get("review_count")?.toString() || "1000");
+            const rating = parseFloat(formData.get("rating")?.toString() || "4.8");
+            const status = formData.get("status")?.toString() || "published";
+
+            // Validate primary fields
+            if (!slug || !title || base_price <= 0) {
+                throw new Error("Slug, Title, and Base Price are required fields.");
+            }
+
+            // A. Process images json and compatibility / usage text (supports one per line or rich HTML)
+            const imagesJson = formData.get("images_json")?.toString() || "[]";
+            let images = "[]";
+            try {
+                const parsed = JSON.parse(imagesJson);
+                if (Array.isArray(parsed)) {
+                    images = JSON.stringify(parsed.filter(Boolean));
+                }
+            } catch (e) {
+                images = JSON.stringify(imagesJson.split("\n").map(l => l.trim()).filter(Boolean));
+            }
+
+            const compatibilityText = formData.get("compatibility_text")?.toString() || "";
+            const trimmedCompat = compatibilityText.trim();
+            const isBlockHtml = /<(p|div|ul|ol|table|h[1-6]|section|article|blockquote)\b[^>]*>/i.test(trimmedCompat);
+            let compatibility = "[]";
+            if (isBlockHtml) {
+                compatibility = JSON.stringify([trimmedCompat]);
+            } else {
+                compatibility = JSON.stringify(
+                    compatibilityText.split("\n").map(l => l.trim()).filter(Boolean)
+                );
+            }
+
+            // B. Process Specs (labels & values)
+            const specLabels = formData.getAll("spec_label[]");
+            const specValues = formData.getAll("spec_value[]");
+            const specsArray = [];
+            for (let i = 0; i < specLabels.length; i++) {
+                const label = specLabels[i]?.toString().trim();
+                const value = specValues[i]?.toString().trim();
+                if (label && value) {
+                    specsArray.push({ label, value });
+                }
+            }
+            const specs = JSON.stringify(specsArray);
+
+            // C. Process Features (titles & descriptions)
+            const featureTitles = formData.getAll("feature_title[]");
+            const featureDescriptions = formData.getAll("feature_description[]");
+            const featuresArray = [];
+            for (let i = 0; i < featureTitles.length; i++) {
+                const fTitle = featureTitles[i]?.toString().trim();
+                const fDesc = featureDescriptions[i]?.toString().trim();
+                if (fTitle && fDesc) {
+                    featuresArray.push({ title: fTitle, description: fDesc });
+                }
+            }
+            const features = JSON.stringify(featuresArray);
+
+            // D. Process FAQs (questions & answers)
+            const faqQuestions = formData.getAll("faq_question[]");
+            const faqAnswers = formData.getAll("faq_answer[]");
+            const faqsArray = [];
+            for (let i = 0; i < faqQuestions.length; i++) {
+                const q = faqQuestions[i]?.toString().trim();
+                const a = faqAnswers[i]?.toString().trim();
+                if (q && a) {
+                    faqsArray.push({ question: q, answer: a });
+                }
+            }
+            const faqs = JSON.stringify(faqsArray);
+
+            let targetId = id;
+
+            if (id === "new") {
+                // Check slug uniqueness
+                const checkSlug = await db.prepare("SELECT id FROM products WHERE slug = ?").bind(slug).first();
+                if (checkSlug) {
+                    throw new Error(`Product slug '${slug}' is already taken.`);
+                }
+
+                // Insert new product
+                await db.prepare(`
+                    INSERT INTO products (slug, title, base_price, cost_price, original_price, badge, description, long_description, meta_title, meta_description, images, specs, features, compatibility, faqs, review_count, rating, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).bind(slug, title, base_price, cost_price, original_price, badge, description, long_description, meta_title, meta_description, images, specs, features, compatibility, faqs, review_count, rating, status).run();
+
+                // Retrieve ID of the newly created product
+                const newRow: any = await db.prepare("SELECT id FROM products WHERE slug = ?").bind(slug).first();
+                if (!newRow) throw new Error("Failed to insert product.");
+                targetId = newRow.id.toString();
+            } else {
+                // Check slug uniqueness (excluding current product)
+                const checkSlug: any = await db.prepare("SELECT id FROM products WHERE slug = ? AND id != ?").bind(slug, id).first();
+                if (checkSlug) {
+                    throw new Error(`Product slug '${slug}' is already taken.`);
+                }
+
+                // Update product row
+                await db.prepare(`
+                    UPDATE products 
+                    SET slug = ?, title = ?, base_price = ?, cost_price = ?, original_price = ?, badge = ?, description = ?, long_description = ?, meta_title = ?, meta_description = ?, images = ?, specs = ?, features = ?, compatibility = ?, faqs = ?, review_count = ?, rating = ?, status = ?
+                    WHERE id = ?
+                `).bind(slug, title, base_price, cost_price, original_price, badge, description, long_description, meta_title, meta_description, images, specs, features, compatibility, faqs, review_count, rating, status, id).run();
+            }
+
+            // E. Process and update packs
+            const packLabels = formData.getAll("pack_label[]");
+            const packUnitCounts = formData.getAll("pack_unit_count[]");
+            const packPrices = formData.getAll("pack_price[]");
+            const packFreeShippings = formData.getAll("pack_free_shipping[]");
+
+            // Delete existing packs for this product first
+            await db.prepare("DELETE FROM product_packs WHERE product_id = ?").bind(targetId).run();
+
+            // Insert new packs
+            for (let i = 0; i < packLabels.length; i++) {
+                const label = packLabels[i]?.toString().trim() || "";
+                const count = parseInt(packUnitCounts[i]?.toString() || "0");
+                const price = parseFloat(packPrices[i]?.toString() || "0");
+                const freeShipping = parseInt(packFreeShippings[i]?.toString() || "0");
+
+                if (label && count > 0 && price > 0) {
+                    await db.prepare(`
+                        INSERT INTO product_packs (product_id, pack_label, unit_count, pack_price, free_shipping)
+                        VALUES (?, ?, ?, ?, ?)
+                    `).bind(targetId, label, count, price, freeShipping).run();
+                }
+            }
+
+            // F. Process Reviews Visibility
+            const visibleReviews = formData.getAll("visible_reviews[]").map(v => parseInt(v.toString()));
+            
+            if (targetId !== "new") {
+                // First, set all reviews for this product to not visible
+                await db.prepare("UPDATE reviews SET is_visible = 0 WHERE product_id = ?").bind(targetId).run();
+                
+                // Then set the selected ones to visible
+                for (const revId of visibleReviews) {
+                    if (!isNaN(revId)) {
+                        await db.prepare("UPDATE reviews SET is_visible = 1 WHERE id = ? AND product_id = ?").bind(revId, targetId).run();
+                    }
+                }
+            }
+
+            if (id === "new") {
+                return Astro.redirect(`/admin/products/${targetId}/?message=created`);
+            } else {
+                successMsg = "Product and pricing packs successfully updated in D1 database!";
+            }
+
+        } catch (e: any) {
+            errorMsg = e.message || "An error occurred while saving the product.";
+        }
+    }
+
+    // 2. Fetch Product Data (or refetch after updating)
+    if (id !== "new") {
+        try {
+            const productRow = await db.prepare("SELECT * FROM products WHERE id = ?").bind(id).first();
+            if (productRow) {
+                product = productRow;
+                
+                // Fetch associated packs
+                const packsResult = await db.prepare("SELECT * FROM product_packs WHERE product_id = ? ORDER BY unit_count ASC").bind(id).all();
+                productPacks = packsResult.results || [];
+                
+                // Fetch associated reviews
+                const reviewsResult = await db.prepare("SELECT * FROM reviews WHERE product_id = ? ORDER BY created_at DESC").bind(id).all();
+                productReviews = reviewsResult.results || [];
+            } else {
+                errorMsg = `Product with ID "${id}" was not found in the database.`;
+            }
+        } catch (e: any) {
+            errorMsg = "Database Error: " + e.message;
+        }
+    } else {
+        // Initialize template metadata for a new product creation
+        product = {
+            id: "new",
+            slug: "",
+            title: "",
+            base_price: 500,
+            cost_price: 250,
+            original_price: 650,
+            description: "",
+            long_description: "",
+            badge: "",
+            meta_title: "",
+            meta_description: "",
+            images: "[]",
+            specs: "[]",
+            features: "[]",
+            compatibility: "[]",
+            faqs: "[]",
+            review_count: 1000,
+            rating: 4.8,
+            status: "published",
+        };
+    }
+}
+
+// Read URL redirect query messages
+const redirectMsg = url.searchParams.get("message");
+if (redirectMsg === "created" && !successMsg) {
+    successMsg = "Product successfully created in D1 database! You can now refine its settings, dynamic specs, and packages below.";
+}
+
+// Decode JSON fields for form rendering
+let parsedImagesArray: string[] = [];
+let parsedCompatibilityArray: string[] = [];
+let parsedSpecs: any[] = [];
+let parsedFeatures: any[] = [];
+let parsedFAQs: any[] = [];
+
+if (product) {
+    try { parsedImagesArray = JSON.parse(product.images); } catch(e) {}
+    try { parsedCompatibilityArray = JSON.parse(product.compatibility); } catch(e) {}
+    try { parsedSpecs = JSON.parse(product.specs); } catch(e) {}
+    try { parsedFeatures = JSON.parse(product.features); } catch(e) {}
+    try { parsedFAQs = JSON.parse(product.faqs); } catch(e) {}
+}
+
+// Templates for creating a new product
+if (id === "new") {
+    if (parsedSpecs.length === 0) {
+        parsedSpecs = [
+            { label: "Connector Type", value: "3.5mm Audio Jack" },
+            { label: "Cable Length", value: "1.2 Meters" },
+            { label: "Driver Size", value: "10mm Dynamic" }
+        ];
+    }
+    if (parsedFeatures.length === 0) {
+        parsedFeatures = [
+            { title: "Crystal Clear Sound", description: "Precision-engineered dynamic drivers deliver rich highs and balanced acoustics." },
+            { title: "Ergonomic Earbuds", description: "Sleek and angled earbuds fit comfortably for long listening sessions." }
+        ];
+    }
+    if (parsedFAQs.length === 0) {
+        parsedFAQs = [
+            { question: "Is this the original Gionee handsfree?", answer: "Yes, we sell 100% original Gionee handsfree sourced directly." }
+        ];
+    }
+    if (productPacks.length === 0) {
+        productPacks = [
+            { pack_label: "Single Pack", unit_count: 1, pack_price: 500, free_shipping: 0 },
+            { pack_label: "Pack of 2 (Save 10% + Free Delivery)", unit_count: 2, pack_price: 800, free_shipping: 1 }
+        ];
+    }
+}
+
+const seoTitle = id === "new" ? "Create Product - Admin Portal" : `Edit Catalog #${product?.id} - Admin Portal`;
+---
+
+<AdminLayout title={seoTitle} activePage="products">
+            <!-- Back Button -->
+            <a href="/admin/products/" class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-brand-orange mb-6 font-semibold transition-colors">
+                ← Back to Products Catalog
+            </a>
+
+            <!-- Error Banner -->
+            {errorMsg && (
+                <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+                    <div class="bg-red-100 text-red-800 p-1 rounded-full shrink-0">⚠️</div>
+                    <div>
+                        <p class="font-semibold">Error Occurred</p>
+                        <p class="text-sm mt-0.5">{errorMsg}</p>
+                    </div>
+                </div>
+            )}
+
+            <!-- Success Banner -->
+            {successMsg && (
+                <div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+                    <div class="bg-green-100 text-green-800 p-1 rounded-full shrink-0">✓</div>
+                    <div>
+                        <p class="font-semibold">Success</p>
+                        <p class="text-sm mt-0.5">{successMsg}</p>
+                    </div>
+                </div>
+            )}
+
+            {product && (
+                <form method="POST" id="product-form" class="space-y-8">
+                    <!-- Title Bar -->
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-lg border border-gray-100 shadow-sm">
+                        <div>
+                            <div class="flex items-center gap-3 flex-wrap">
+                                <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">
+                                    {id === "new" ? "Create New Product" : `Edit Product: ${product.title}`}
+                                </h1>
+                                {id !== "new" && (
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-brand-orange/10 text-brand-orange border border-brand-orange/20">
+                                        ID: #{product.id}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                            <div class="flex items-center gap-2 bg-gray-50 px-3 py-2 rounded-md border border-gray-200">
+                                <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status:</label>
+                                <select name="status" class="bg-transparent text-sm font-semibold text-gray-800 focus:outline-none cursor-pointer">
+                                    <option value="published" selected={product?.status === "published" || !product?.status}>Published (Live)</option>
+                                    <option value="draft" selected={product?.status === "draft"}>Draft (Hidden)</option>
+                                </select>
+                            </div>
+
+                            <button type="submit" class="flex-1 sm:flex-initial py-2.5 px-6 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md text-sm transition-all shadow-sm active:scale-[0.98] hover:scale-[1.01]">
+                                Save Product
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Hidden inputs -->
+                    <input type="hidden" name="action_type" id="action-type-field" value="save" />
+
+                    <!-- Editor Grid -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        
+                        <!-- Left Columns: Core Metadata & Arrays -->
+                        <div class="lg:col-span-2 space-y-8">
+                            
+                            <!-- Card 1: Core Details -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-3 gap-3">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="user" class="w-5 h-5 text-brand-orange" /> Core Product Details
+                                    </h3>
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Promo Badge (Optional)</label>
+                                        <input type="text" name="badge" value={product.badge} placeholder="e.g. Best Seller" class="w-40 px-2 py-1.5 border border-gray-200 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" />
+                                    </div>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Product Title *</label>
+                                        <input type="text" name="title" value={product.title} placeholder="e.g. Gionee Handsfree Type-C" class="w-full px-3 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" required />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Slug (SEO Clean URL) *</label>
+                                        <div class="relative group">
+                                            <input type="text" name="slug" id="slug-input" value={product.slug} placeholder="e.g. gionee-handsfree-type-c" class={`w-full px-3 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange font-mono text-xs pr-10 ${id !== 'new' ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : 'bg-white text-gray-800'}`} required readonly={id !== 'new'} />
+                                            {id !== 'new' && (
+                                                <button type="button" id="unlock-slug-btn" class="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-brand-orange transition-colors" title="Unlock slug for editing (Warning: changing this may break SEO links)">
+                                                    <Icon name="shield" class="w-4 h-4" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+
+
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Product Description *</label>
+                                    <textarea name="description" placeholder="Write compelling marketing copy about the product..." class="w-full px-3 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" rows="4" required>{product.description}</textarea>
+                                </div>
+                            </div>
+
+                            <!-- Card 2: Media & Compatibility -->
+                            <!-- Premium Media Gallery Card -->
+                            <div class="bg-white p-5 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-3 gap-3">
+                                    <div>
+                                        <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                            <Icon name="image" class="w-5 h-5 text-brand-orange" /> Product Media Gallery
+                                        </h3>
+                                        <p class="text-[11px] text-gray-400 mt-1">
+                                            The first image is the <strong>Primary Cover</strong>. Drag and drop to reorder.
+                                        </p>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" id="browse-gallery-btn" class="text-[11px] font-semibold text-brand-orange bg-brand-orange/10 hover:bg-brand-orange/20 px-3 py-1.5 rounded transition-colors flex items-center gap-1.5">
+                                            <Icon name="image" class="w-3.5 h-3.5" /> Browse R2
+                                        </button>
+                                        <span id="gallery-counter" class="text-[11px] font-semibold text-gray-500 bg-gray-100 px-2.5 py-1.5 rounded">
+                                            0 Images
+                                        </span>
+                                    </div>
+                                </div>
+                                
+                                <!-- Drag & Drop Zone -->
+                                <div id="drop-zone" class="border-2 border-dashed border-gray-200 hover:border-brand-orange hover:bg-brand-orange/5 bg-gray-50/50 p-4 rounded-lg text-center cursor-pointer transition-all duration-300 group flex flex-col sm:flex-row items-center justify-center gap-4">
+                                    <input type="file" id="file-uploader" multiple accept="image/*" class="hidden" />
+                                    <div class="p-2.5 bg-white rounded-md border border-gray-100 shadow-sm group-hover:scale-110 transition-transform">
+                                        <Icon name="image" class="w-5 h-5 text-gray-400 group-hover:text-brand-orange" />
+                                    </div>
+                                    <div class="text-center sm:text-left">
+                                        <p class="font-semibold text-gray-700 text-sm">
+                                            Drag & drop images here, or <span class="text-brand-orange hover:underline font-semibold">browse files</span>
+                                        </p>
+                                        <p class="text-[11px] text-gray-400 mt-0.5">Supports PNG, JPG, WebP (Max 5MB each)</p>
+                                    </div>
+                                </div>
+
+                                <!-- Hidden json input -->
+                                <input type="hidden" name="images_json" id="images-json-field" value={JSON.stringify(parsedImagesArray)} />
+
+                                <!-- Sortable Thumbnail Grid -->
+                                <div id="gallery-grid" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 mt-4">
+                                    <!-- Populated via JavaScript -->
+                                </div>
+                            </div>
+
+                            <!-- Card 4: Dynamic Features -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="check" class="w-5 h-5 text-brand-orange" /> Dynamic Marketing Features
+                                    </h3>
+                                    <button type="button" id="add-feature-btn" class="text-xs font-semibold text-brand-orange hover:text-brand-orange/90 bg-brand-orange/5 hover:bg-brand-orange/10 px-3 py-1.5 rounded transition-colors">
+                                        + Add Feature
+                                    </button>
+                                </div>
+                                <p class="text-xs text-gray-400 mt-1">Detailed cards highlighting audio qualities, microphone performance, wire materials, or fit comfort.</p>
+
+                                <div class="overflow-x-auto rounded-md border border-gray-200">
+                                    <table class="w-full text-left text-sm whitespace-nowrap">
+                                        <thead class="bg-gray-50 text-gray-500 font-semibold border-b border-gray-200 text-xs uppercase">
+                                            <tr>
+                                                <th class="px-4 py-3 w-1/3">Feature Title</th>
+                                                <th class="px-4 py-3">Description Text</th>
+                                                <th class="px-4 py-3 w-10 text-center"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="features-container" class="divide-y divide-gray-100 bg-white">
+                                            {parsedFeatures.map((feat) => (
+                                                <tr class="feature-row group hover:bg-gray-50 transition-colors">
+                                                    <td class="p-2">
+                                                        <input type="text" name="feature_title[]" value={feat.title} placeholder="e.g. Heavy Bass" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white font-semibold transition-all" required />
+                                                    </td>
+                                                    <td class="p-2">
+                                                        <input type="text" name="feature_description[]" value={feat.description} placeholder="Detailed marketing bullets..." class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                                                    </td>
+                                                    <td class="p-2 text-center">
+                                                        <button type="button" class="remove-row-btn w-8 h-8 inline-flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors m-0" title="Delete Feature">
+                                                            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Detailed Description Card (Moved here) -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <h3 class="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3 flex items-center gap-2">
+                                    <Icon name="file-text" class="w-5 h-5 text-brand-orange" /> Detailed Description
+                                </h3>
+                                <p class="text-xs text-gray-400">Allows custom HTML styling, bullet lists, bold text etc., rendered inside the storefront accordion.</p>
+                                <textarea name="long_description" id="long_description" class="hidden">{product.long_description || ""}</textarea>
+                                <div id="quill-editor" class="bg-white rounded-b-md border border-gray-200" style="min-height: 250px;"></div>
+                            </div>
+
+                            <!-- Card 3: Dynamic Specifications -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="shield" class="w-5 h-5 text-brand-orange" /> Dynamic Specifications
+                                    </h3>
+                                    <button type="button" id="add-spec-btn" class="text-xs font-semibold text-brand-orange hover:text-brand-orange/90 bg-brand-orange/5 hover:bg-brand-orange/10 px-3 py-1.5 rounded transition-colors">
+                                        + Add Row
+                                    </button>
+                                </div>
+                                <p class="text-xs text-gray-400 mt-1">Configure precise tech specs (e.g. Connector Type, Impedance, Cable Length) displayed in rows on storefront pages.</p>
+                                
+                                <div class="overflow-x-auto rounded-md border border-gray-200">
+                                    <table class="w-full text-left text-sm whitespace-nowrap">
+                                        <thead class="bg-gray-50 text-gray-500 font-semibold border-b border-gray-200 text-xs uppercase">
+                                            <tr>
+                                                <th class="px-4 py-3 w-1/3">Spec Name</th>
+                                                <th class="px-4 py-3">Value</th>
+                                                <th class="px-4 py-3 w-10 text-center"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="specs-container" class="divide-y divide-gray-100 bg-white">
+                                            {parsedSpecs.map((spec) => (
+                                                <tr class="spec-row group hover:bg-gray-50 transition-colors">
+                                                    <td class="p-2">
+                                                        <input type="text" name="spec_label[]" value={spec.label} placeholder="e.g. Cable Length" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                                                    </td>
+                                                    <td class="p-2">
+                                                        <input type="text" name="spec_value[]" value={spec.value} placeholder="e.g. 1.2 Meters" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                                                    </td>
+                                                    <td class="p-2 text-center">
+                                                        <button type="button" class="remove-row-btn w-8 h-8 inline-flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors m-0" title="Delete Row">
+                                                            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Usage & Suitability Card (formerly Device Compatibility) -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-3 gap-2">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="check-circle" class="w-5 h-5 text-brand-orange" /> Usage & Suitability
+                                    </h3>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[11px] px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200">
+                                            HTML & Plain Text Supported
+                                        </span>
+                                        <button type="button" id="toggle-compat-preview" class="text-[11px] font-semibold text-brand-orange hover:bg-orange-50 px-2.5 py-1 rounded border border-orange-200 transition-colors cursor-pointer">
+                                            Preview Output
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-600 font-medium mb-1">
+                                        Specify recommended wear occasions, weather suitability, guidelines, or instructions.
+                                    </label>
+                                    <p class="text-[11px] text-gray-400">
+                                        Write <strong>one item per line</strong> for an automatic checkmark bullet list, OR write custom <strong>HTML tags</strong> (e.g. <code>&lt;p&gt;</code>, <code>&lt;ul&gt;</code>, <code>&lt;strong&gt;</code>, <code>&lt;div&gt;</code>) to automatically render a custom layout on the product page.
+                                    </p>
+                                </div>
+                                <textarea 
+                                    name="compatibility_text" 
+                                    id="compatibility-textarea"
+                                    placeholder="All Weather & Four-Season Wear&#10;Evening Galas & Formal Gatherings&#10;Daily Office & Executive Wear&#10;&#10;<!-- Or custom HTML -->&#10;<p><strong>Best For:</strong> All seasons and executive wear.</p>" 
+                                    class="w-full px-3.5 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white font-mono text-xs leading-relaxed" 
+                                    rows="6"
+                                >{parsedCompatibilityArray.join("\n")}</textarea>
+
+                                <!-- Live HTML Preview Box -->
+                                <div id="compat-preview-container" class="hidden p-4 rounded-lg bg-gray-50 border border-gray-200 space-y-2">
+                                    <div class="flex items-center justify-between text-xs text-gray-500 font-bold uppercase tracking-wider border-b border-gray-200 pb-2">
+                                        <span>Product Page Display Preview</span>
+                                        <span class="text-[10px] text-gray-400 font-normal">How it renders on the storefront</span>
+                                    </div>
+                                    <div id="compat-preview-content" class="text-gray-800 text-sm leading-relaxed"></div>
+                                </div>
+                            </div>
+
+                            <!-- Card 5: FAQs -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="message-circle" class="w-5 h-5 text-brand-orange" /> Product FAQs
+                                    </h3>
+                                    <button type="button" id="add-faq-btn" class="text-xs font-semibold text-brand-orange hover:text-brand-orange/90 bg-brand-orange/5 hover:bg-brand-orange/10 px-3 py-1.5 rounded transition-colors">
+                                        + Add FAQ
+                                    </button>
+                                </div>
+                                <p class="text-xs text-gray-400 mt-1">Add product-specific Questions and Answers to pre-empt customer doubts directly on the storefront detail pages.</p>
+
+                                <div id="faqs-container" class="space-y-4">
+                                    {parsedFAQs.map((faq) => (
+                                        <div class="bg-gray-50 p-4 rounded-md border border-gray-100 relative faq-row flex gap-4 overflow-hidden pr-10">
+                                            <div class="flex-1 space-y-3">
+                                                <input type="text" name="faq_question[]" value={faq.question} placeholder="Question" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:border-brand-orange bg-white font-semibold" required />
+                                                <textarea name="faq_answer[]" placeholder="Answer..." class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:border-brand-orange bg-white" rows="2" required>{faq.answer}</textarea>
+                                            </div>
+                                            <button type="button" class="remove-row-btn absolute top-0 right-0 w-8 h-8 flex items-center justify-center text-white hover:text-white bg-red-500 hover:bg-red-600 rounded-bl-md transition-colors shrink-0 m-0" title="Delete FAQ"><svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column: SEO Metadata & Pricing Packs -->
+                        <div class="space-y-8">
+                                                  <!-- Card: Pricing & Bundles -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <div class="flex justify-between items-center border-b border-gray-100 pb-3">
+                                    <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                                        <Icon name="shopping-cart" class="w-5 h-5 text-brand-orange" /> Pricing & Bundles
+                                    </h3>
+                                    <button type="button" id="add-pack-btn" class="text-xs font-semibold text-brand-orange hover:text-brand-orange/90 bg-brand-orange/5 hover:bg-brand-orange/10 px-3 py-1.5 rounded transition-colors">
+                                        + Add Bundle
+                                    </button>
+                                </div>
+                                
+                                <div class="bg-gray-50/80 border border-gray-200 p-5 rounded-lg shadow-inner">
+                                    <h4 class="text-xs font-bold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-1.5"><svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg> Main Product Pricing</h4>
+                                    <div class="grid grid-cols-1 gap-4">
+                                    <!-- Selling Price -->
+                                    <div class="col-span-1">
+                                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Selling Price (PKR) *</label>
+                                        <div class="relative">
+                                            <span class="absolute left-3 top-2.5 text-gray-400 text-sm font-medium">Rs</span>
+                                            <input type="number" name="base_price" value={product.base_price} placeholder="600" class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white font-semibold" required />
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Cost Price -->
+                                    <div class="col-span-1">
+                                        <label class="block text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Cost Price <span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-normal leading-none" title="Used for BI profit calculations">Internal</span></label>
+                                        <div class="relative">
+                                            <span class="absolute left-3 top-2.5 text-gray-400 text-sm font-medium">Rs</span>
+                                            <input type="number" name="cost_price" value={product.cost_price !== undefined ? product.cost_price : 0} placeholder="250" class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" required />
+                                        </div>
+                                    </div>
+
+                                    <!-- Compare at Price -->
+                                    <div class="col-span-1">
+                                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Compare at Price</label>
+                                        <div class="relative">
+                                            <span class="absolute left-3 top-2.5 text-gray-400 text-sm font-medium">Rs</span>
+                                            <input type="number" name="original_price" value={product.original_price || ""} placeholder="850" class="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" />
+                                        </div>
+                                        <p class="text-[10px] text-gray-500 mt-1">Shows a strikethrough price</p>
+                                    </div>
+                                    </div>
+                                </div>
+
+                                <p class="text-xs text-gray-400 mt-2">Configure bulk multi-packs enabling quick upsells (e.g. Single Pack, Pack of 3). High quantities often have custom discounted pricing and Free Shipping toggled.</p>
+
+                                <div id="packs-container" class="space-y-4 mt-2">
+                                    {productPacks.map((pack) => (
+                                        <div class="p-4 rounded-md border border-gray-200 bg-gray-50/50 space-y-3 relative pack-row overflow-hidden pr-10">
+                                            <button type="button" class="remove-row-btn absolute top-0 right-0 w-8 h-8 flex items-center justify-center text-white hover:text-white bg-red-500 hover:bg-red-600 rounded-bl-md transition-colors shrink-0 m-0" title="Delete Bundle"><svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                                            
+                                            <div>
+                                                <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Bundle Label</label>
+                                                <input type="text" name="pack_label[]" value={pack.pack_label} placeholder="e.g. Pack of 2 (Save 15%)" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white font-semibold" required />
+                                            </div>
+
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Quantity (Units)</label>
+                                                    <input type="number" name="pack_unit_count[]" value={pack.unit_count} placeholder="2" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white" required min="1" />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Bundle Price (PKR)</label>
+                                                    <input type="number" name="pack_price[]" value={pack.pack_price} placeholder="1000" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white font-semibold text-brand-orange" required min="1" />
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Shipping Offer</label>
+                                                <select name="pack_free_shipping[]" class="w-full pl-3 pr-10 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white">
+                                                    <option value="0" selected={pack.free_shipping === 0}>Paid Delivery (Standard Rates)</option>
+                                                    <option value="1" selected={pack.free_shipping === 1}>Free Delivery Offer</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <!-- Card: Reviews & Ratings -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <h3 class="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3 flex items-center gap-2">
+                                    <Icon name="star" class="w-5 h-5 text-brand-orange" /> Reviews & Ratings
+                                </h3>
+
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Total Reviews Count</label>
+                                        <input type="number" name="review_count" value={product.review_count} placeholder="1000" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" required min="0" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Average Rating (Out of 5)</label>
+                                        <input type="number" step="0.1" name="rating" value={product.rating} placeholder="4.8" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" required min="1" max="5" />
+                                    </div>
+                                </div>
+
+                                <div class="mt-4 pt-4 border-t border-gray-100 relative" id="reviews-multiselect-container">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Visible Customer Reviews</label>
+                                        <span class="text-[10px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{productReviews.length} Available</span>
+                                    </div>
+                                    
+                                    <!-- Selected Pills Container -->
+                                    <div id="selected-reviews-pills" class="flex flex-wrap gap-2 mb-3 empty:hidden">
+                                        {/* Pills will be injected here via JS */}
+                                    </div>
+
+                                    <!-- Search Input -->
+                                    <div class="relative">
+                                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                            <Icon name="search" class="w-4 h-4 text-gray-400" />
+                                        </div>
+                                        <input type="text" id="review-search-input" placeholder="Search reviews by customer name or comment..." class="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white" autocomplete="off" />
+                                    </div>
+                                    
+                                    <!-- Dropdown List -->
+                                    <div id="review-dropdown-list" class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto hidden">
+                                        {productReviews.length === 0 ? (
+                                            <div class="p-3 text-xs text-gray-400 text-center">No reviews available.</div>
+                                        ) : (
+                                            productReviews.map((review: any) => (
+                                                <div class="review-option p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0" data-id={review.id} data-name={review.author || 'Anonymous'} data-search={((review.author || '') + " " + (review.text || '')).toLowerCase()}>
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="text-sm font-semibold text-gray-900">{review.author || 'Anonymous'}</span>
+                                                        <div class="flex text-brand-orange">
+                                                            {Array.from({ length: 5 }).map((_, i) => (
+                                                                <svg class={`w-3 h-3 ${i < review.rating ? 'fill-current' : 'text-gray-300 fill-current'}`} viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <p class="text-xs text-gray-600 mt-1 line-clamp-1">{review.text}</p>
+                                                    <span class="text-[10px] text-gray-400 mt-1 block font-medium">{new Date(review.created_at).toLocaleDateString()}</span>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                    <p class="text-[10px] text-gray-400 mt-2 flex items-center gap-1.5">
+                                        <Icon name="info" class="w-3.5 h-3.5" /> Selected reviews will be featured on the product page.
+                                    </p>
+                                    
+                                    {/* Hidden container to hold actual form inputs for submission */}
+                                    <div id="hidden-reviews-inputs" class="hidden">
+                                        {productReviews.filter((r: any) => r.is_visible === 1).map((review: any) => (
+                                            <input type="hidden" name="visible_reviews[]" value={review.id} data-id={review.id} data-name={review.author || 'Anonymous'} />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Card: SEO Metadata -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-4">
+                                <h3 class="text-lg font-semibold text-gray-900 border-b border-gray-100 pb-3 flex items-center gap-2">
+                                    <Icon name="search" class="w-5 h-5 text-brand-orange" /> SEO Optimization
+                                </h3>
+                                
+                                <div>
+                                    <div class="flex justify-between items-end mb-2">
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Meta Title Tag *</label>
+                                        <span id="meta-title-count" class="text-[10px] font-mono text-gray-400">0/60</span>
+                                    </div>
+                                    <input type="text" id="meta-title-input" name="meta_title" value={product.meta_title} placeholder="Ideal limit: 50-60 characters" class="w-full px-3 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white mb-1.5" required />
+                                    <div class="w-full bg-gray-100 rounded-full h-1">
+                                        <div id="meta-title-progress" class="bg-gray-300 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div class="flex justify-between items-end mb-2">
+                                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider">Meta Description *</label>
+                                        <span id="meta-desc-count" class="text-[10px] font-mono text-gray-400">0/160</span>
+                                    </div>
+                                    <textarea id="meta-desc-input" name="meta_description" placeholder="Ideal limit: 120-160 characters..." class="w-full px-3 py-2.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white mb-1.5" rows="4" required>{product.meta_description}</textarea>
+                                    <div class="w-full bg-gray-100 rounded-full h-1">
+                                        <div id="meta-desc-progress" class="bg-gray-300 h-1 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            )}
+    <!-- Slug Unlock Modal -->
+    <div id="slug-modal" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm hidden flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md flex flex-col overflow-hidden m-4 transform scale-95 opacity-0 transition-all duration-300" id="slug-modal-content">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3 bg-red-50/50">
+                <div class="p-1.5 bg-red-100 text-red-600 rounded-md">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>
+                <h3 class="text-lg font-semibold text-gray-900">Unlock SEO Slug?</h3>
+            </div>
+            <div class="p-6 text-gray-600 text-sm">
+                <p>Warning: Changing the slug will change the product URL. This can break existing SEO rankings and external links.</p>
+                <p class="mt-3 font-medium text-gray-800">Are you absolutely sure you want to unlock it for editing?</p>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3">
+                <button type="button" id="cancel-slug-btn" class="px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors">Cancel</button>
+                <button type="button" id="confirm-slug-btn" class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all shadow-sm">Yes, Unlock</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Media Gallery Modal -->
+    <div id="gallery-modal" class="fixed inset-0 z-50 bg-gray-900/50 backdrop-blur-sm hidden flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden m-4 transform scale-95 opacity-0 transition-all duration-300" id="gallery-modal-content">
+            <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                <h3 class="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <Icon name="image" class="w-5 h-5 text-brand-orange" />
+                    Select from R2 Media Library
+                </h3>
+                <button type="button" id="close-gallery-btn" class="text-gray-400 hover:text-gray-600 p-1">
+                    <Icon name="x" class="w-6 h-6" />
+                </button>
+            </div>
+            <div class="p-6 flex-1 overflow-y-auto">
+                <div id="gallery-modal-loading" class="flex flex-col items-center justify-center py-12">
+                    <div class="w-8 h-8 border-4 border-brand-orange/20 border-t-brand-orange rounded-full animate-spin"></div>
+                    <p class="text-sm text-gray-500 mt-4 font-medium">Loading images from Cloudflare R2...</p>
+                </div>
+                <div id="gallery-modal-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4 hidden">
+                    <!-- Images will be injected here -->
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex justify-end gap-3">
+                <button type="button" id="cancel-gallery-btn" class="px-4 py-2 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors">Cancel</button>
+                <button type="button" id="insert-gallery-btn" class="px-4 py-2 text-sm font-semibold bg-brand-orange text-white rounded-lg hover:bg-brand-orange/90 transition-all shadow-sm">Add Selected (0)</button>
+            </div>
+        </div>
+    </div>
+</AdminLayout>
+
+<Fragment set:html={quillHead} />
+
+<script>
+    import { actions } from "astro:actions";
+
+    // Client-side row delegation to add dynamic fields on button clicks
+    document.addEventListener("DOMContentLoaded", () => {
+        // Event delegation to remove rows
+        document.addEventListener("click", (e) => {
+            const target = e.target as HTMLElement;
+            if (target.classList.contains("remove-row-btn") || target.closest(".remove-row-btn")) {
+                const btn = target.classList.contains("remove-row-btn") ? target : target.closest(".remove-row-btn");
+                const row = btn?.closest(".spec-row, .feature-row, .faq-row, .pack-row");
+                if (row) {
+                    row.remove();
+                }
+            }
+        });
+
+        // Add Spec Row
+        document.getElementById("add-spec-btn")?.addEventListener("click", () => {
+            const container = document.getElementById("specs-container");
+            if (container) {
+                const tr = document.createElement("tr");
+                tr.className = "spec-row group hover:bg-gray-50 transition-colors animate-fade-in";
+                tr.innerHTML = `
+                    <td class="p-2">
+                        <input type="text" name="spec_label[]" placeholder="Spec Name (e.g. Material)" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                    </td>
+                    <td class="p-2">
+                        <input type="text" name="spec_value[]" placeholder="Value (e.g. TPE Elasticity)" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                    </td>
+                    <td class="p-2 text-center">
+                        <button type="button" class="remove-row-btn w-8 h-8 inline-flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors m-0" title="Delete Row">
+                            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+                container.appendChild(tr);
+            }
+        });
+
+        // Add Feature Row
+        const addFeatureBtn = document.getElementById("add-feature-btn");
+        const featuresContainer = document.getElementById("features-container");
+        if (addFeatureBtn && featuresContainer) {
+            addFeatureBtn.addEventListener("click", () => {
+                const tr = document.createElement("tr");
+                tr.className = "feature-row group hover:bg-gray-50 transition-colors animate-fade-in";
+                tr.innerHTML = `
+                    <td class="p-2">
+                        <input type="text" name="feature_title[]" placeholder="Feature Title" class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white font-semibold transition-all" required />
+                    </td>
+                    <td class="p-2">
+                        <input type="text" name="feature_description[]" placeholder="Detailed marketing bullets..." class="w-full px-3 py-2 border border-transparent hover:border-gray-200 focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded-md text-sm bg-transparent focus:bg-white transition-all" required />
+                    </td>
+                    <td class="p-2 text-center">
+                        <button type="button" class="remove-row-btn w-8 h-8 inline-flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors m-0" title="Delete Feature">
+                            <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+                featuresContainer.appendChild(tr);
+            });
+        }
+
+        // Add FAQ Row
+        document.getElementById("add-faq-btn")?.addEventListener("click", () => {
+            const container = document.getElementById("faqs-container");
+            if (container) {
+                const div = document.createElement("div");
+                div.className = "bg-gray-50 p-4 rounded-md border border-gray-100 relative faq-row flex gap-4 overflow-hidden pr-10 animate-fade-in";
+                div.innerHTML = `
+                    <div class="flex-1 space-y-3">
+                        <input type="text" name="faq_question[]" placeholder="Question (e.g. How long is delivery?)" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:border-brand-orange bg-white font-semibold" required />
+                        <textarea name="faq_answer[]" placeholder="Answer..." class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:border-brand-orange bg-white" rows="2" required></textarea>
+                    </div>
+                    <button type="button" class="remove-row-btn absolute top-0 right-0 w-8 h-8 flex items-center justify-center text-white hover:text-white bg-red-500 hover:bg-red-600 rounded-bl-md transition-colors m-0"><svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                `;
+                container.appendChild(div);
+            }
+        });
+
+        // Add Pack Row
+        document.getElementById("add-pack-btn")?.addEventListener("click", () => {
+            const container = document.getElementById("packs-container");
+            if (container) {
+                const div = document.createElement("div");
+                div.className = "p-4 rounded-md border border-gray-200 bg-gray-50/50 space-y-3 relative pack-row overflow-hidden pr-10 animate-fade-in";
+                div.innerHTML = `
+                    <button type="button" class="remove-row-btn absolute top-0 right-0 w-8 h-8 flex items-center justify-center text-white hover:text-white bg-red-500 hover:bg-red-600 rounded-bl-md transition-colors m-0"><svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+                    <div>
+                        <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Bundle Label</label>
+                        <input type="text" name="pack_label[]" placeholder="e.g. Pack of 3 (Save 20%)" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white font-semibold" required />
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Quantity (Units)</label>
+                            <input type="number" name="pack_unit_count[]" placeholder="3" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white" required min="1" />
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Bundle Price (PKR)</label>
+                            <input type="number" name="pack_price[]" placeholder="1200" class="w-full px-3 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white font-semibold text-brand-orange" required min="1" />
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Shipping Offer</label>
+                        <select name="pack_free_shipping[]" class="w-full pl-3 pr-10 py-2 border border-gray-200 rounded-md text-sm focus:outline-none bg-white">
+                            <option value="0">Paid Delivery (Standard Rates)</option>
+                            <option value="1">Free Delivery Offer</option>
+                        </select>
+                    </div>
+                `;
+                container.appendChild(div);
+            }
+        });
+
+        // ----------------------------------------------------
+        // R2 IMAGE UPLOADER & SORTABLE GALLERY LOGIC
+        // ----------------------------------------------------
+        const dropZone = document.getElementById("drop-zone");
+        const fileUploader = document.getElementById("file-uploader") as HTMLInputElement;
+        const galleryGrid = document.getElementById("gallery-grid");
+        const imagesJsonField = document.getElementById("images-json-field") as HTMLInputElement;
+        const galleryCounter = document.getElementById("gallery-counter");
+
+        // Rich Text Editor Initialization (Quill)
+        let quill: any = null;
+        if (typeof (window as any).Quill !== 'undefined') {
+            quill = new (window as any).Quill('#quill-editor', {
+                theme: 'snow',
+                modules: {
+                    toolbar: [
+                        [{ 'header': [2, 3, 4, false] }],
+                        ['bold', 'italic', 'underline', 'strike'],
+                        [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                        ['link', 'clean']
+                    ]
+                }
+            });
+            // Initial content
+            const longDescField = document.getElementById("long_description") as HTMLTextAreaElement;
+            if (longDescField && longDescField.value) {
+                let initialHtml = longDescField.value;
+                if (initialHtml.includes("&lt;") && /&lt;(p|div|ul|ol|li|h[1-6]|strong|em|b|i|span|br)\b/i.test(initialHtml)) {
+                    initialHtml = initialHtml.replace(/^<ol><li[^>]*><span[^>]*><\/span><span[^>]*>/i, "").replace(/<\/span><\/li><\/ol>$/i, "");
+                    initialHtml = initialHtml.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+                    longDescField.value = initialHtml;
+                }
+                quill.clipboard.dangerouslyPasteHTML(initialHtml);
+            }
+        }
+
+        // Intercept Form Submit to sync Quill HTML and activeImages
+        const productForm = document.getElementById("product-form") as HTMLFormElement;
+        productForm?.addEventListener("submit", (e) => {
+            const longDescField = document.getElementById("long_description") as HTMLTextAreaElement;
+            if (quill && longDescField) {
+                longDescField.value = quill.root.innerHTML;
+            }
+            syncImagesState(); // Ensure latest alts are grabbed
+        });
+
+        let activeImages: { url: string; alt: string }[] = [];
+        try {
+            const parsed = JSON.parse(imagesJsonField?.value || "[]");
+            activeImages = parsed.map((item: any) => {
+                if (typeof item === "string") return { url: item, alt: "" };
+                if (item && typeof item === "object") {
+                    return {
+                        url: item.url || item.src || (typeof item === 'string' ? item : ""),
+                        alt: item.alt || ""
+                    };
+                }
+                return { url: "", alt: "" };
+            }).filter((item: any) => item.url !== "");
+        } catch (e) {
+            activeImages = [];
+        }
+
+        // Update hidden field & count badge
+        function syncImagesState() {
+            // First collect all current inputs to update our activeImages state
+            const altInputs = document.querySelectorAll(".img-alt-input");
+            altInputs.forEach((input: any) => {
+                const idx = parseInt(input.dataset.idx);
+                if (activeImages[idx]) {
+                    activeImages[idx].alt = input.value;
+                }
+            });
+
+            if (imagesJsonField) {
+                imagesJsonField.value = JSON.stringify(activeImages);
+            }
+            if (galleryCounter) {
+                galleryCounter.textContent = `${activeImages.length} Image${activeImages.length === 1 ? '' : 's'}`;
+            }
+        }
+
+        // Render Sortable Gallery Grid
+        let dragSourceIndex: number | null = null;
+
+        function renderGallery() {
+            if (!galleryGrid) return;
+            galleryGrid.innerHTML = "";
+
+            if (activeImages.length === 0) {
+                galleryGrid.innerHTML = `
+                    <div class="col-span-full py-8 text-center text-gray-400 text-sm">
+                        No images uploaded yet. Drag & drop files or click browse to start!
+                    </div>
+                `;
+                syncImagesState();
+                return;
+            }
+
+            activeImages.forEach((imgObj, index) => {
+                const isPrimary = index === 0;
+                
+                const card = document.createElement("div");
+                card.className = `relative group rounded-md overflow-hidden border-2 transition-all duration-300 ${
+                    isPrimary 
+                        ? "border-brand-orange bg-brand-orange/5 ring-4 ring-brand-orange/10 scale-[1.02] shadow-md z-10" 
+                        : "border-gray-200 hover:border-brand-orange hover:shadow-sm"
+                } flex flex-col bg-white`;
+                card.setAttribute("draggable", "true");
+                card.setAttribute("data-index", index.toString());
+
+                // Thumbnail image preview
+                const imgContainer = document.createElement("div");
+                imgContainer.className = "relative aspect-square w-full cursor-move border-b border-gray-100 bg-gray-50/50";
+                
+                const img = document.createElement("img");
+                img.src = imgObj.url || "";
+                img.alt = imgObj.alt || `Product Image ${index + 1}`;
+                img.className = "w-full h-full object-contain mix-blend-multiply select-none pointer-events-none p-1";
+                
+                // Fallback icon for broken images (e.g. invalid URL)
+                img.onerror = () => {
+                    img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ccc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2' ry='2'></rect><circle cx='8.5' cy='8.5' r='1.5'></circle><polyline points='21 15 16 10 5 21'></polyline></svg>";
+                    img.className = "w-1/2 h-1/2 mx-auto my-auto object-contain mix-blend-multiply select-none pointer-events-none opacity-50";
+                };
+                imgContainer.appendChild(img);
+                
+                // Alt Text Input Region
+                const altContainer = document.createElement("div");
+                altContainer.className = "p-2 bg-white";
+                const altInput = document.createElement("input");
+                altInput.type = "text";
+                altInput.placeholder = "Alt Text (SEO)";
+                altInput.className = "img-alt-input w-full text-xs px-2 py-1.5 border border-gray-200 rounded focus:outline-none focus:border-brand-orange text-gray-700 font-medium";
+                altInput.value = imgObj.alt;
+                altInput.dataset.idx = index.toString();
+                altInput.addEventListener("change", syncImagesState);
+                altContainer.appendChild(altInput);
+
+                card.appendChild(imgContainer);
+                card.appendChild(altContainer);
+
+                // Primary Badge Overlay or Make Cover button (attached to imgContainer)
+                if (isPrimary) {
+                    const badge = document.createElement("div");
+                    badge.className = "absolute bottom-2 left-2 px-2.5 py-1 bg-brand-orange text-white text-[10px] font-semibold uppercase tracking-wider rounded shadow-sm flex items-center gap-1 select-none pointer-events-none";
+                    badge.innerHTML = "★ Primary";
+                    imgContainer.appendChild(badge);
+                } else {
+                    const makeCoverBtn = document.createElement("button");
+                    makeCoverBtn.type = "button";
+                    makeCoverBtn.className = "absolute bottom-2 left-2 px-2.5 py-1 bg-white hover:bg-brand-orange hover:text-white text-gray-700 text-[10px] font-semibold uppercase tracking-wider rounded shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-105 active:scale-95";
+                    makeCoverBtn.textContent = "Make Cover";
+                    makeCoverBtn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        syncImagesState(); // sync alts before reorder
+                        const selected = activeImages.splice(index, 1)[0];
+                        activeImages.unshift(selected);
+                        syncImagesState();
+                        renderGallery();
+                    });
+                    imgContainer.appendChild(makeCoverBtn);
+                }
+
+                // Delete Button Overlay
+                const deleteBtn = document.createElement("button");
+                deleteBtn.type = "button";
+                deleteBtn.className = "absolute top-2 right-2 p-1.5 bg-white/90 hover:bg-red-500 hover:text-white text-red-500 rounded shadow-sm opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-105 active:scale-95";
+                deleteBtn.innerHTML = `
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" style="pointer-events: none;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                `;
+                deleteBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    syncImagesState();
+                    activeImages.splice(index, 1);
+                    syncImagesState();
+                    renderGallery();
+                });
+                imgContainer.appendChild(deleteBtn);
+
+                // DRAG & DROP EVENTS FOR REORDERING
+                card.addEventListener("dragstart", (e) => {
+                    dragSourceIndex = index;
+                    card.classList.add("opacity-50", "border-dashed", "border-brand-orange");
+                    if (e.dataTransfer) {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", index.toString());
+                    }
+                });
+
+                card.addEventListener("dragover", (e) => {
+                    e.preventDefault();
+                    if (e.dataTransfer) {
+                        e.dataTransfer.dropEffect = "move";
+                    }
+                });
+
+                card.addEventListener("dragenter", () => {
+                    if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                        card.classList.add("border-brand-orange", "scale-105", "shadow-md");
+                    }
+                });
+
+                card.addEventListener("dragleave", () => {
+                    if (dragSourceIndex !== null && dragSourceIndex !== index) {
+                        card.classList.remove("border-brand-orange", "scale-105", "shadow-md");
+                    }
+                });
+
+                card.addEventListener("drop", (e) => {
+                    e.preventDefault();
+                    if (e.dataTransfer) {
+                        const sourceIndex = parseInt(e.dataTransfer.getData("text/plain"));
+                        if (sourceIndex !== index && !isNaN(sourceIndex)) {
+                            syncImagesState();
+                            // Reorder activeImages array
+                            const moved = activeImages.splice(sourceIndex, 1)[0];
+                            activeImages.splice(index, 0, moved);
+                            syncImagesState();
+                            renderGallery();
+                        }
+                    }
+                });
+
+                card.addEventListener("dragend", () => {
+                    card.classList.remove("opacity-50", "border-dashed", "border-brand-orange");
+                    dragSourceIndex = null;
+                });
+
+                galleryGrid.appendChild(card);
+            });
+
+            syncImagesState();
+        }
+
+        // Initialize drop-zone click to browse
+        dropZone?.addEventListener("click", () => {
+            fileUploader?.click();
+        });
+
+        // Click on file-uploader input should not bubble
+        fileUploader?.addEventListener("click", (e) => {
+            e.stopPropagation();
+        });
+
+        // Handle File Selection
+        fileUploader?.addEventListener("change", async (e) => {
+            const target = e.target as HTMLInputElement;
+            const files = target.files;
+            if (files && files.length > 0) {
+                await uploadMultipleFiles(files);
+            }
+        });
+
+        // Drop Zone dragover & drop handlers
+        dropZone?.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.classList.add("border-brand-orange", "bg-brand-orange/5");
+        });
+
+        dropZone?.addEventListener("dragleave", () => {
+            dropZone.classList.remove("border-brand-orange", "bg-brand-orange/5");
+        });
+
+        dropZone?.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("border-brand-orange", "bg-brand-orange/5");
+            if (e.dataTransfer) {
+                const files = e.dataTransfer.files;
+                if (files && files.length > 0) {
+                    await uploadMultipleFiles(files);
+                }
+            }
+        });
+
+        // Upload multiple files concurrently
+        async function uploadMultipleFiles(files: FileList) {
+            const promises = Array.from(files).map(async (file) => {
+                if (!file.type.startsWith("image/")) {
+                    alert(`Skipping '${file.name}': Not an image file.`);
+                    return;
+                }
+
+                // Add uploading placeholder
+                const placeholderId = "placeholder-" + Math.random().toString(36).substring(2, 9);
+                addUploadingPlaceholder(placeholderId, file.name);
+
+                try {
+                    const formData = new FormData();
+                    formData.append("file", file);
+
+                    // Call the secure Astro Action to upload directly to R2
+                    const response = await actions.uploadImage(formData);
+                    
+                    removeUploadingPlaceholder(placeholderId);
+
+                    if (response.error) {
+                        alert(`Upload failed for '${file.name}': ` + response.error.message);
+                        return;
+                    }
+
+                    if (response.data?.url) {
+                        activeImages.push({ url: response.data.url, alt: "" });
+                        syncImagesState();
+                        renderGallery();
+                    }
+                } catch (err) {
+                    removeUploadingPlaceholder(placeholderId);
+                    alert(`Network error during '${file.name}' upload.`);
+                }
+            });
+
+            await Promise.all(promises);
+            // Reset uploader input
+            if (fileUploader) fileUploader.value = "";
+        }
+
+        // Render Uploading Card inside Grid
+        function addUploadingPlaceholder(id: string, fileName: string) {
+            if (!galleryGrid) return;
+            
+            // Remove the empty text if it exists
+            const emptyText = galleryGrid.querySelector(".col-span-full");
+            if (emptyText) emptyText.remove();
+
+            const card = document.createElement("div");
+            card.id = id;
+            card.className = "relative aspect-[3/4] rounded-md overflow-hidden border-2 border-dashed border-brand-orange/30 bg-gray-50 flex flex-col items-center justify-center p-3 animate-pulse";
+            
+            card.innerHTML = `
+                <div class="w-8 h-8 rounded-full border-4 border-brand-orange/20 border-t-brand-orange animate-spin mb-2"></div>
+                <div class="text-[10px] font-semibold text-gray-500 text-center truncate w-full px-1">${fileName}</div>
+                <div class="text-[9px] font-semibold text-brand-orange uppercase tracking-wider mt-0.5">Uploading...</div>
+            `;
+            
+            galleryGrid.appendChild(card);
+        }
+
+        function removeUploadingPlaceholder(id: string) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+
+        // Trigger initial gallery rendering
+        renderGallery();
+
+        // --------------------------------------------------------------------------------
+        // MEDIA GALLERY MODAL LOGIC
+        // --------------------------------------------------------------------------------
+        const browseGalleryBtn = document.getElementById("browse-gallery-btn");
+        const galleryModal = document.getElementById("gallery-modal");
+        const galleryModalContent = document.getElementById("gallery-modal-content");
+        const closeGalleryBtn = document.getElementById("close-gallery-btn");
+        const cancelGalleryBtn = document.getElementById("cancel-gallery-btn");
+        const insertGalleryBtn = document.getElementById("insert-gallery-btn");
+        const modalLoading = document.getElementById("gallery-modal-loading");
+        const modalGrid = document.getElementById("gallery-modal-grid");
+        
+        let r2Images: string[] = [];
+        let selectedR2Images: Set<string> = new Set();
+
+        function openGalleryModal() {
+            if (!galleryModal || !galleryModalContent) return;
+            galleryModal.classList.remove("hidden");
+            // small delay for transition
+            setTimeout(() => {
+                galleryModalContent.classList.remove("scale-95", "opacity-0");
+                galleryModalContent.classList.add("scale-100", "opacity-100");
+            }, 10);
+            
+            selectedR2Images.clear();
+            updateInsertBtn();
+            fetchR2Images();
+        }
+
+        function closeGalleryModal() {
+            if (!galleryModal || !galleryModalContent) return;
+            galleryModalContent.classList.remove("scale-100", "opacity-100");
+            galleryModalContent.classList.add("scale-95", "opacity-0");
+            setTimeout(() => {
+                galleryModal.classList.add("hidden");
+            }, 300);
+        }
+
+        async function fetchR2Images() {
+            if (!modalLoading || !modalGrid) return;
+            modalLoading.classList.remove("hidden");
+            modalGrid.classList.add("hidden");
+            modalGrid.innerHTML = "";
+
+            try {
+                const response = await actions.listImages();
+                if (response.error) {
+                    alert("Failed to load images: " + response.error.message);
+                    closeGalleryModal();
+                    return;
+                }
+                
+                r2Images = response.data?.images || [];
+                renderModalGrid();
+            } catch (err) {
+                console.error(err);
+                alert("Network error fetching images.");
+                closeGalleryModal();
+            }
+        }
+
+        function renderModalGrid() {
+            if (!modalLoading || !modalGrid) return;
+            modalLoading.classList.add("hidden");
+            modalGrid.classList.remove("hidden");
+
+            if (r2Images.length === 0) {
+                modalGrid.innerHTML = `<div class="col-span-full py-12 text-center text-gray-400">No images found in R2 storage.</div>`;
+                return;
+            }
+
+            r2Images.forEach(url => {
+                const isAlreadyAdded = activeImages.some(img => img.url === url);
+                
+                const card = document.createElement("div");
+                card.className = `relative aspect-square rounded-md overflow-hidden border-2 cursor-pointer transition-all ${isAlreadyAdded ? "opacity-50 pointer-events-none border-gray-200" : "border-transparent hover:border-brand-orange/50"}`;
+                
+                const img = document.createElement("img");
+                img.src = url;
+                img.className = "w-full h-full object-cover mix-blend-multiply bg-gray-50/50 p-1";
+                
+                img.onerror = () => {
+                    img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ccc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='3' width='18' height='18' rx='2' ry='2'></rect><circle cx='8.5' cy='8.5' r='1.5'></circle><polyline points='21 15 16 10 5 21'></polyline></svg>";
+                    img.className = "w-1/2 h-1/2 mx-auto my-auto object-contain mix-blend-multiply select-none pointer-events-none opacity-50";
+                };
+                
+                const overlay = document.createElement("div");
+                overlay.className = "absolute inset-0 bg-brand-orange/10 border-2 border-brand-orange hidden flex items-start justify-end p-2 transition-opacity";
+                overlay.innerHTML = `<div class="bg-brand-orange text-white rounded-full p-0.5 shadow-sm"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg></div>`;
+                
+                if (!isAlreadyAdded) {
+                    card.addEventListener("click", () => {
+                        if (selectedR2Images.has(url)) {
+                            selectedR2Images.delete(url);
+                            card.classList.remove("ring-2", "ring-brand-orange");
+                            overlay.classList.add("hidden");
+                        } else {
+                            selectedR2Images.add(url);
+                            card.classList.add("ring-2", "ring-brand-orange");
+                            overlay.classList.remove("hidden");
+                        }
+                        updateInsertBtn();
+                    });
+                } else {
+                    const badge = document.createElement("div");
+                    badge.className = "absolute bottom-1 left-1 bg-black/50 text-white text-[9px] px-1.5 py-0.5 rounded";
+                    badge.textContent = "Added";
+                    card.appendChild(badge);
+                }
+
+                card.appendChild(img);
+                card.appendChild(overlay);
+                modalGrid.appendChild(card);
+            });
+        }
+
+        function updateInsertBtn() {
+            if (insertGalleryBtn) {
+                insertGalleryBtn.textContent = `Add Selected (${selectedR2Images.size})`;
+                if (selectedR2Images.size > 0) {
+                    insertGalleryBtn.classList.remove("opacity-50", "cursor-not-allowed");
+                } else {
+                    insertGalleryBtn.classList.add("opacity-50", "cursor-not-allowed");
+                }
+            }
+        }
+
+        browseGalleryBtn?.addEventListener("click", openGalleryModal);
+        closeGalleryBtn?.addEventListener("click", closeGalleryModal);
+        cancelGalleryBtn?.addEventListener("click", closeGalleryModal);
+        
+        insertGalleryBtn?.addEventListener("click", () => {
+            if (selectedR2Images.size === 0) return;
+            selectedR2Images.forEach(url => {
+                activeImages.push({ url, alt: "" });
+            });
+            syncImagesState();
+            renderGallery();
+            closeGalleryModal();
+        });
+
+        // Close on outside click
+        galleryModal?.addEventListener("click", (e) => {
+            if (e.target === galleryModal) closeGalleryModal();
+        });
+
+        // ----------------------------------------------------
+        // REVIEWS MULTI-SELECT LOGIC
+        // ----------------------------------------------------
+        const reviewSearchInput = document.getElementById("review-search-input") as HTMLInputElement;
+        const reviewDropdownList = document.getElementById("review-dropdown-list");
+        const selectedReviewsPills = document.getElementById("selected-reviews-pills");
+        const hiddenReviewsInputs = document.getElementById("hidden-reviews-inputs");
+        const reviewOptions = document.querySelectorAll(".review-option");
+
+        if (reviewSearchInput && reviewDropdownList && selectedReviewsPills && hiddenReviewsInputs) {
+            // Show dropdown on focus
+            reviewSearchInput.addEventListener("focus", () => {
+                reviewDropdownList.classList.remove("hidden");
+            });
+
+            // Hide dropdown on click outside
+            document.addEventListener("click", (e) => {
+                const target = e.target as HTMLElement;
+                if (!reviewSearchInput.contains(target) && !reviewDropdownList.contains(target) && !target.closest('.remove-pill-btn')) {
+                    reviewDropdownList.classList.add("hidden");
+                }
+            });
+
+            // Filter options on input
+            reviewSearchInput.addEventListener("input", (e) => {
+                const term = (e.target as HTMLInputElement).value.toLowerCase();
+                reviewOptions.forEach(opt => {
+                    if (opt.classList.contains("hidden-by-selection")) return;
+                    const searchStr = opt.getAttribute("data-search") || "";
+                    if (searchStr.includes(term)) {
+                        (opt as HTMLElement).style.display = "block";
+                    } else {
+                        (opt as HTMLElement).style.display = "none";
+                    }
+                });
+            });
+
+            // Render pill
+            function createPill(id: string, name: string) {
+                const pill = document.createElement("div");
+                pill.className = "flex items-center gap-1.5 bg-brand-orange/10 border border-brand-orange/20 text-brand-orange px-2.5 py-1 rounded-full text-xs font-semibold animate-fade-in";
+                pill.innerHTML = `
+                    <span>${name}</span>
+                    <button type="button" class="remove-pill-btn hover:text-red-600 transition-colors focus:outline-none" data-id="${id}">
+                        <svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                `;
+                return pill;
+            }
+
+            // Sync UI state
+            function syncReviewsState() {
+                selectedReviewsPills!.innerHTML = "";
+                const hiddenInputs = Array.from(hiddenReviewsInputs!.querySelectorAll("input"));
+                const selectedIds = new Set(hiddenInputs.map(input => input.value));
+
+                hiddenInputs.forEach(input => {
+                    const pill = createPill(input.value, input.getAttribute("data-name") || "Unknown");
+                    selectedReviewsPills!.appendChild(pill);
+                });
+
+                reviewOptions.forEach(opt => {
+                    const id = opt.getAttribute("data-id") || "";
+                    if (selectedIds.has(id)) {
+                        opt.classList.add("hidden-by-selection");
+                        (opt as HTMLElement).style.display = "none";
+                    } else {
+                        opt.classList.remove("hidden-by-selection");
+                        const term = reviewSearchInput.value.toLowerCase();
+                        const searchStr = opt.getAttribute("data-search") || "";
+                        if (term === "" || searchStr.includes(term)) {
+                            (opt as HTMLElement).style.display = "block";
+                        } else {
+                            (opt as HTMLElement).style.display = "none";
+                        }
+                    }
+                });
+            }
+
+            // Handle Option Click
+            reviewOptions.forEach(opt => {
+                opt.addEventListener("click", () => {
+                    const id = opt.getAttribute("data-id") || "";
+                    const name = opt.getAttribute("data-name") || "";
+                    
+                    // Add hidden input
+                    const input = document.createElement("input");
+                    input.type = "hidden";
+                    input.name = "visible_reviews[]";
+                    input.value = id;
+                    input.setAttribute("data-id", id);
+                    input.setAttribute("data-name", name);
+                    hiddenReviewsInputs!.appendChild(input);
+                    
+                    reviewSearchInput.value = "";
+                    syncReviewsState();
+                    reviewSearchInput.focus(); // Keep focus after selection
+                });
+            });
+
+            // Handle Pill Removal (Event Delegation)
+            selectedReviewsPills.addEventListener("click", (e) => {
+                const target = e.target as HTMLElement;
+                const btn = target.closest(".remove-pill-btn");
+                if (btn) {
+                    const id = btn.getAttribute("data-id");
+                    const inputToRemove = hiddenReviewsInputs!.querySelector(`input[data-id="${id}"]`);
+                    if (inputToRemove) {
+                        inputToRemove.remove();
+                        syncReviewsState();
+                    }
+                }
+            });
+
+            // Initial Sync
+            syncReviewsState();
+        }
+
+    });
+
+    // SEO Character Counters
+    function updateSEOProgress(inputId, countId, progressId, maxGreenLimit) {
+        const input = document.getElementById(inputId);
+        const count = document.getElementById(countId);
+        const progress = document.getElementById(progressId);
+        if (!input || !count || !progress) return;
+
+        const update = () => {
+            const len = input.value.length;
+            count.textContent = `${len}/${maxGreenLimit}`;
+            let percent = (len / maxGreenLimit) * 100;
+            if (percent > 100) percent = 100;
+            progress.style.width = `${percent}%`;
+
+            if (len === 0) {
+                progress.className = "h-1 rounded-full transition-all duration-300 bg-gray-300";
+                count.className = "text-[10px] font-mono text-gray-400";
+            } else if (len <= maxGreenLimit) {
+                progress.className = "h-1 rounded-full transition-all duration-300 bg-green-500";
+                count.className = "text-[10px] font-mono text-green-600 font-semibold";
+            } else {
+                progress.className = "h-1 rounded-full transition-all duration-300 bg-red-500";
+                count.className = "text-[10px] font-mono text-red-500 font-semibold";
+            }
+        };
+        input.addEventListener('input', update);
+        update(); // Init
+    }
+    updateSEOProgress('meta-title-input', 'meta-title-count', 'meta-title-progress', 60);
+    updateSEOProgress('meta-desc-input', 'meta-desc-count', 'meta-desc-progress', 160);
+
+    // Slug Unlocking logic
+    const unlockBtn = document.getElementById('unlock-slug-btn');
+    const slugInput = document.getElementById('slug-input');
+    const slugModal = document.getElementById('slug-modal');
+    const slugModalContent = document.getElementById('slug-modal-content');
+    const cancelSlugBtn = document.getElementById('cancel-slug-btn');
+    const confirmSlugBtn = document.getElementById('confirm-slug-btn');
+
+    if (unlockBtn && slugInput && slugModal && slugModalContent && cancelSlugBtn && confirmSlugBtn) {
+        
+        function closeSlugModal() {
+            slugModalContent.classList.remove("scale-100", "opacity-100");
+            slugModalContent.classList.add("scale-95", "opacity-0");
+            setTimeout(() => {
+                slugModal.classList.add("hidden");
+            }, 300);
+        }
+
+        unlockBtn.addEventListener('click', () => {
+            if (slugInput.hasAttribute('readonly')) {
+                slugModal.classList.remove("hidden");
+                setTimeout(() => {
+                    slugModalContent.classList.remove("scale-95", "opacity-0");
+                    slugModalContent.classList.add("scale-100", "opacity-100");
+                }, 10);
+            }
+        });
+
+        cancelSlugBtn.addEventListener('click', closeSlugModal);
+
+        confirmSlugBtn.addEventListener('click', () => {
+            slugInput.removeAttribute('readonly');
+            slugInput.classList.remove('bg-gray-50', 'text-gray-500', 'cursor-not-allowed');
+            slugInput.classList.add('bg-white', 'text-gray-800');
+            unlockBtn.innerHTML = `<svg class="w-4 h-4 text-brand-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"></path></svg>`; // unlocked padlock
+            unlockBtn.title = "Slug unlocked";
+            closeSlugModal();
+            slugInput.focus();
+        });
+    }
+
+    // Usage & Suitability HTML / Plain-text live preview toggle
+    const compatTextarea = document.getElementById('compatibility-textarea') as HTMLTextAreaElement | null;
+    const toggleCompatPreviewBtn = document.getElementById('toggle-compat-preview');
+    const compatPreviewContainer = document.getElementById('compat-preview-container');
+    const compatPreviewContent = document.getElementById('compat-preview-content');
+
+    if (compatTextarea && toggleCompatPreviewBtn && compatPreviewContainer && compatPreviewContent) {
+        toggleCompatPreviewBtn.addEventListener('click', () => {
+            const isHidden = compatPreviewContainer.classList.contains('hidden');
+            if (isHidden) {
+                const val = compatTextarea.value.trim();
+                const hasBlockTags = /<(p|div|ul|ol|table|h[1-6]|section|article|blockquote)\b[^>]*>/i.test(val);
+                if (hasBlockTags) {
+                    compatPreviewContent.innerHTML = val || '<em class="text-gray-400">Empty HTML</em>';
+                } else {
+                    const lines = val.split('\n').map(l => l.trim()).filter(Boolean);
+                    if (lines.length === 0) {
+                        compatPreviewContent.innerHTML = '<em class="text-gray-400">No items specified</em>';
+                    } else {
+                        compatPreviewContent.innerHTML = '<ul class="space-y-2.5">' + lines.map(line => 
+                            `<li class="flex items-start gap-2.5"><span class="text-green-600 font-bold shrink-0">✓</span><span class="text-gray-700">${line}</span></li>`
+                        ).join('') + '</ul>';
+                    }
+                }
+                compatPreviewContainer.classList.remove('hidden');
+                toggleCompatPreviewBtn.textContent = 'Hide Preview';
+            } else {
+                compatPreviewContainer.classList.add('hidden');
+                toggleCompatPreviewBtn.textContent = 'Preview Output';
+            }
+        });
+    }
+</script>
+
+<style>
+    /* Sleek micro-animation for dynamic insertions */
+    .animate-fade-in {
+        animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>

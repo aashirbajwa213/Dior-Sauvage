@@ -1,0 +1,536 @@
+---
+import { Image, getImage } from "astro:assets";
+import heroImage from "../assets/hero.png";
+const optimizedHero = await getImage({ src: heroImage, format: "webp", widths: [400, heroImage.width] });
+import MainLayout from "../layouts/MainLayout.astro";
+import ProductCard from "../components/ProductCard.astro";
+import Button from "../components/ui/Button.astro";
+import FeatureItem from "../components/FeatureItem.astro";
+import FAQItem from "../components/FAQItem.astro";
+import SpecRow from "../components/SpecRow.astro";
+import Icon from "../components/ui/Icon.astro";
+import HomepageReviews from "../components/HomepageReviews.astro";
+import { singleSauvageProduct } from "../data/product";
+
+const seoTitle = "Dior Sauvage Eau de Perfum - Eau de Toilette 100ML Price In Pakistan | SauvageDior.pk";
+const seoDescription = "Dior Sauvage 100ml Eau de Parfum & Eau de Toilette in Pakistan: Rs. 4,599 with Free Delivery nationwide. Authentic brand leftover surplus lot with identical 12+ hours monster lasting, projection, COD & open parcel check warranty.";
+
+const db = Astro.locals.runtime?.env?.DB;
+let productsList: any[] = [];
+
+if (db) {
+	try {
+		const productsResult = await db.prepare("SELECT * FROM products ORDER BY id ASC").all();
+		productsList = productsResult.results || [];
+		
+		for (const prod of productsList) {
+			try { 
+				prod.images = JSON.parse(prod.images); 
+			} catch(e) { 
+				prod.images = []; 
+			}
+			
+			const packsResult = await db.prepare("SELECT * FROM product_packs WHERE product_id = ? ORDER BY unit_count ASC").bind(prod.id).all();
+			prod.packs = packsResult.results || [];
+			
+			const reviewStats = await db.prepare("SELECT COUNT(*) as count, AVG(rating) as avg_rating FROM reviews WHERE product_id = ?").bind(prod.id).first();
+			prod.reviewCount = prod.review_count || 4890;
+			prod.rating = reviewStats?.avg_rating ? parseFloat(Number(reviewStats.avg_rating).toFixed(1)) : (prod.rating || 4.2);
+		}
+	} catch (e) {
+		console.error("Failed to fetch products from D1 in index page:", e);
+	}
+}
+
+if (productsList.length === 0) {
+	productsList = [singleSauvageProduct];
+}
+
+const product = productsList[0] || singleSauvageProduct;
+
+const features = [
+	{
+		icon: "star",
+		title: "Brand Leftover Lot Pricing",
+		description:
+			"Imported surplus stock lot without showroom overheads, delivering luxury sillage at a fair price.",
+	},
+	{
+		icon: "check",
+		title: "12+ Hours Monster Lasting",
+		description: "High concentration perfume oils formulated to match the beast-mode projection and lasting power of the original.",
+	},
+	{
+		icon: "check",
+		title: "Magnetic Cap & Heavy Glass Bottle",
+		description: "Signature weighted glass bottle with iconic magnetic snap cap and ultra-fine precision spray atomizer.",
+	},
+	{
+		icon: "phone",
+		title: "Open Parcel Check Warranty",
+		description: "Open and inspect your parcel physically upon delivery via TCS / Leopards before paying Cash on Delivery.",
+	},
+];
+
+const faqs = [
+	{
+		question: "What is a Brand Leftover Lot and why is the price so reasonable?",
+		answer: "Brand leftover lots consist of surplus inventory batches imported directly without retail boutique markups, distributor margins, or high showroom overheads. This allows us to offer the identical fragrance formulation at direct surplus pricing in Pakistan."
+	},
+	{
+		question: "Does it have the exact same lasting and projection as retail store bottles?",
+		answer: "Yes! It features the identical scent oil concentration with Calabrian bergamot, Sichuan pepper, and ambroxan, delivering 12+ hours of monster longevity and powerful sillage."
+	},
+	{
+		question: "Can I open and check the parcel before paying?",
+		answer: "Absolutely. We provide an Open Parcel Checking Warranty on Cash on Delivery across Pakistan. You can inspect the bottle upon delivery before handing over payment to the courier rider."
+	},
+	{
+		question: "How long does the fragrance last after spraying?",
+		answer: "It delivers phenomenal beast-mode performance: 10 to 14+ hours of longevity on skin and over 24 hours on fabrics with strong projection."
+	},
+	{
+		question: "What are the delivery charges and delivery times?",
+		answer: "Delivery is 100% FREE nationwide across Pakistan via TCS and Leopards Courier within 2 to 3 working days."
+	},
+	{
+		question: "What is your return and exchange policy?",
+		answer: "We offer a 7-day hassle-free exchange and money-back guarantee if the item arrives damaged or fails to meet quality standards."
+	}
+];
+
+const homepageReviews = [
+	{
+		rating: 4.1,
+		title: "100% Original Scent Profile & Verifiable Batch Code!",
+		text: "Ordered with slight hesitation but it is completely genuine! Checked the batch code on CheckFresh and verified the magnetic cap click. The projection is insane, lasted over 14 hours on my shirt.",
+		author: "Hamza Tariq",
+		location: "Lahore, DHA"
+	},
+	{
+		rating: 4.6,
+		title: "Best Perfume for Men in Pakistan Hands Down",
+		text: "Dior Sauvage is my all-time signature scent. The bergamot opening and vanilla dry-down are unmatched. Courier delivered in 2 days in Karachi, excellent service.",
+		author: "Daniyal Khan",
+		location: "Karachi, Clifton"
+	},
+	{
+		rating: 4.9,
+		title: "Massive Compliments From Everyone",
+		text: "Wore it to a wedding reception and at least 5 people asked me what I was wearing. Genuine product, super fast delivery and great packaging.",
+		author: "Usman Farooq",
+		location: "Islamabad, F-10"
+	},
+	{
+		rating: 4.7,
+		title: "Worth Every Single Rupee",
+		text: "Delivery was prompt via TCS and COD was hassle-free. Authentic fragrance with strong sillage. Will definitely buy the Duo pack next time for my brother.",
+		author: "Shahraiz Ali",
+		location: "Rawalpindi, Bahria Town"
+	},
+	{
+		rating: 5.0,
+		title: "Exceptional Longevity and Sillage",
+		text: "Smells rich, majestic and luxurious. Spray atomizer is so smooth. Thank you for providing genuine perfumes in Pakistan at reasonable prices.",
+		author: "Dr. Bilal Arshad",
+		location: "Faisalabad"
+	},
+	{
+		rating: 4.8,
+		title: "Unbelievable Monster Lasting & Magnetic Cap!",
+		text: "Hands down the best fragrance deal in Pakistan! Scent is 100% identical to the retail bottle, beast-mode projection, and verified open parcel before paying TCS rider.",
+		author: "Zohaib Hassan",
+		location: "Multan, Cantt"
+	}
+];
+---
+
+<MainLayout
+	title={seoTitle}
+	description={seoDescription}
+	schemaType="home"
+	schemaData={{ faqs }}
+>
+	<Fragment slot="head">
+		<!-- Preload LCP hero image -->
+		<link rel="preload" as="image" imagesrcset={optimizedHero.srcSet.attribute} imagesizes="(max-width: 1024px) 100vw, 532px" fetchpriority="high" />
+	</Fragment>
+
+	{/* 2. Hero Section (Main Banner) */}
+	<section
+		class="relative bg-gradient-to-b from-[#fbfbfa] via-[#f7f6f4] to-white text-gray-900 pt-10 pb-6 lg:pt-14 lg:pb-8 overflow-hidden border-b border-gray-100"
+	>
+		<!-- Subtle ambient luxury blue blur -->
+		<div
+			class="absolute top-0 right-0 w-96 h-96 bg-[#02274F]/10 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"
+		></div>
+		<div
+			class="absolute bottom-0 left-0 w-80 h-80 bg-stone-200/40 rounded-full blur-3xl pointer-events-none -ml-20 -mb-20"
+		></div>
+
+		<div class="container mx-auto px-4 max-w-6xl relative z-10">
+			<!-- Mobile-Only Header: Badge + H1 before image -->
+			<div class="block lg:hidden space-y-4 mb-6 text-center">
+				<div class="flex justify-center">
+					<div
+						class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-stone-100 border border-stone-200/80 text-stone-800 text-xs sm:text-sm font-medium shadow-xs"
+					>
+						<span class="relative flex h-2 w-2">
+							<span
+								class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"
+							></span>
+							<span
+								class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"
+							></span>
+						</span>
+						#1 Brand Leftover Lot Fragrance Store in Pakistan
+					</div>
+				</div>
+
+				<h1
+					class="text-3xl sm:text-4xl font-extrabold text-black leading-[1.14] tracking-tight text-center"
+				>
+					<span class="text-[#02274F]">Dior Sauvage</span> Eau de Perfum - Eau de Toilette 100ML Price In Pakistan
+				</h1>
+			</div>
+
+			<div class="flex flex-col lg:flex-row items-center gap-8 lg:gap-14">
+				<!-- Desktop Text / Mobile Description & CTAs -->
+				<div class="w-full lg:w-1/2 space-y-6 order-2 lg:order-1">
+					<!-- Desktop-Only Header: Badge + H1 -->
+					<div class="hidden lg:block space-y-6">
+						<div
+							class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-stone-100 border border-stone-200/80 text-stone-800 text-xs sm:text-sm font-medium shadow-xs"
+						>
+							<span class="relative flex h-2 w-2">
+								<span
+									class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"
+								></span>
+								<span
+									class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"
+								></span>
+							</span>
+							#1 Brand Leftover Lot Fragrance Store in Pakistan
+						</div>
+
+						<h1
+							class="text-3xl sm:text-4xl lg:text-[44px] xl:text-[48px] font-extrabold text-black leading-[1.14] tracking-tight"
+						>
+							<span class="text-[#02274F]">Dior Sauvage</span> Eau de Perfum - Eau de Toilette 100ML Price In Pakistan
+						</h1>
+					</div>
+
+					<p
+						class="text-base sm:text-lg text-gray-600 mb-6 max-w-lg leading-relaxed font-normal"
+					>
+						Sourced directly from authentic brand leftover surplus lots. Experience the exact iconic fragrance formulation with radiant Calabrian bergamot, magnetic ambroxan, and 12+ hours monster longevity and projection as retail — at direct leftover lot pricing in Pakistan.
+					</p>
+
+					<!-- Trust Checkmarks -->
+					<div class="space-y-2 pb-1">
+						<div class="flex items-center gap-2 text-xs sm:text-sm font-semibold text-gray-800">
+							<span class="text-emerald-600 font-bold">✓</span> Brand Leftover Stock Lot
+						</div>
+						<div class="flex items-center gap-2 text-xs sm:text-sm font-semibold text-gray-800">
+							<span class="text-emerald-600 font-bold">✓</span> Same Lasting & Monster Projection
+						</div>
+						<div class="flex items-center gap-2 text-xs sm:text-sm font-semibold text-gray-800">
+							<span class="text-emerald-600 font-bold">✓</span> Open Parcel Check Warranty on COD
+						</div>
+					</div>
+
+					<!-- Call-to-Action (CTA) Buttons -->
+					<div class="flex flex-col sm:flex-row gap-3 pt-1">
+						<Button
+							href="#product-showcase"
+							size="lg"
+							class="!bg-[#02274F] hover:!bg-[#011d3b] text-white font-bold px-7 shadow-md hover:shadow-lg transition-all"
+							style="background-color: #02274F !important;"
+						>
+							Order Now – Rs. 4,599
+						</Button>
+						<Button
+							href="/about/"
+							variant="outline"
+							size="lg"
+							class="border-gray-300 bg-white text-gray-800 hover:bg-black hover:text-white hover:border-black transition-all"
+						>
+							About Our Store
+						</Button>
+					</div>
+
+					<!-- Micro-Trust Badges -->
+					<div
+						class="pt-3.5 pb-3.5 flex flex-wrap sm:flex-nowrap items-center gap-y-2 gap-x-0 sm:gap-6 text-[13px] sm:text-sm text-gray-600 border-t border-gray-200/80"
+					>
+						<span class="flex items-center gap-1.5 w-1/2 sm:w-auto"
+							><Icon
+								name="check"
+								class="w-4 h-4 text-emerald-600"
+							/> Cash on Delivery</span
+						>
+						<span class="flex items-center gap-1.5 w-1/2 sm:w-auto"
+							><Icon
+								name="check"
+								class="w-4 h-4 text-emerald-600"
+							/> Open Parcel Check</span
+						>
+						<span class="flex items-center gap-1.5 w-1/2 sm:w-auto"
+							><Icon
+								name="check"
+								class="w-4 h-4 text-emerald-600"
+							/> 2-3 Days Fast Delivery</span
+						>
+					</div>
+				</div>
+
+				<!-- Product Image Section (On mobile appears directly under H1, on desktop appears on right) -->
+				<div class="w-full sm:w-[92%] lg:w-[58%] mx-auto relative group flex flex-col items-center order-1 lg:order-2">
+					<!-- Signature Sauvage midnight blue ambient glow behind product bottle -->
+					<div
+						class="absolute -inset-8 bg-gradient-to-tr from-[#02274F]/40 via-[#0a4687]/35 to-[#1560b0]/25 blur-3xl rounded-full opacity-85 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none"
+					></div>
+					<div
+						class="absolute w-[80%] h-[75%] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[#02274F]/30 blur-2xl rounded-full pointer-events-none"
+					></div>
+
+					{/* Enlarged transparent perfume product presentation */}
+					<div
+						class="relative transform group-hover:scale-[1.025] group-hover:-translate-y-1.5 transition-all duration-500 rounded-3xl p-1 sm:p-2 flex items-center justify-center w-full"
+					>
+						<Image
+							src={heroImage}
+							alt="Dior Sauvage Eau de Perfum - Eau de Toilette 100ML Price In Pakistan"
+							class="w-full h-auto max-h-[500px] sm:max-h-[560px] lg:max-h-[620px] object-contain mx-auto filter drop-shadow-[0_25px_45px_rgba(0,0,0,0.24)] transition-transform duration-700 group-hover:scale-[1.02]"
+							loading="eager"
+							fetchpriority="high"
+							widths={[400, 600, heroImage.width]}
+							sizes="(max-width: 1024px) 100vw, 800px"
+						/>
+					</div>
+
+					{/* In Stock Button Parallel Center Aligned with Image */}
+					<div class="mt-4 sm:mt-6 lg:mt-10 flex justify-center w-full">
+						<div
+							class="bg-white/95 backdrop-blur-md px-5 py-2.5 rounded-2xl shadow-lg border border-gray-100 flex items-center gap-3 animate-bounce-slow"
+						>
+							<div
+								class="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shadow-xs"
+							>
+								<Icon name="check" class="w-4.5 h-4.5" />
+							</div>
+							<div class="text-left">
+								<div class="text-xs sm:text-sm font-bold text-gray-900 leading-tight">
+									In Stock (100ml)
+								</div>
+								<div class="text-[10px] sm:text-[11px] text-gray-500 font-medium">
+									Ready To Ship
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{/* 3. Featured Product Showcase Section */}
+	<section id="product-showcase" class="pt-8 pb-14 lg:pt-10 lg:pb-20 bg-white">
+		<div class="container mx-auto px-4 max-w-6xl">
+			<div class="text-center max-w-2xl mx-auto mb-8 sm:mb-10">
+				<span class="text-xs uppercase font-bold tracking-widest text-[#02274F]">BRAND LEFTOVER STOCK LOT</span>
+				<h2 class="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mt-1 tracking-tight">
+					Christian Dior Sauvage EDP & EDT 100ml
+				</h2>
+				<p class="text-gray-600 mt-2">
+					Direct surplus stock lot. Identical fragrance lasting, magnetic sillage, and beast-mode projection at fair, honest pricing in Pakistan.
+				</p>
+			</div>
+
+			<div class="max-w-md mx-auto">
+				<div class="shadow-xl rounded-2xl overflow-hidden border border-slate-100">
+					<ProductCard
+						id={product.id}
+						title="Dior Sauvage Eau De Parfum - Eau De Toilette - 100ml"
+						price={4599}
+						originalPrice={product.original_price || 8500}
+						rating={4.2}
+						reviewCount={4890}
+						image={Array.isArray(product.images) && product.images.length > 0 ? (typeof product.images[0] === 'string' ? product.images[0] : product.images[0]?.url) : "/images/sauvage-dior/sauvage-4.jpg"}
+						href={product.slug.startsWith('/') ? product.slug : `/${product.slug}/`}
+						badge="Brand Leftover Lot"
+						packs={product.packs && product.packs.length > 0 ? product.packs : singleSauvageProduct.packs}
+					/>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{/* 4. Verified Customer Reviews Section */}
+	<HomepageReviews 
+		title="What Our Customers Say" 
+		subTitle="★ ★ ★ ★ ★ 4.2/5 from 12,000+ Verified Buyers Across Pakistan"
+		reviews={homepageReviews} 
+		bgClass="bg-slate-50" 
+	/>
+
+	{/* 5. Semantic SEO Content & Value Proposition Section */}
+	<section class="py-14 lg:py-20 bg-white">
+		<div class="container mx-auto px-4 max-w-6xl">
+			<div class="flex flex-col lg:flex-row gap-16">
+				<div class="lg:w-1/2">
+					<h2 class="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-6 tracking-tight">
+						Why Dior Sauvage is the Unrivaled King of Men's Fragrances
+					</h2>
+					<p class="text-gray-600 mb-8 leading-relaxed">
+						Christian Dior Sauvage has dominated the global men's fragrance world since its creation. Its signature balance of crisp Calabrian bergamot, Sichuan pepper, and warm ambroxan performs extraordinarily well in Pakistan's climate, projecting effortlessly through heat, humidity, and cool evenings alike. Sourced from brand leftover surplus lots, our 100ml Eau de Parfum (EDP) and Eau de Toilette (EDT) offer fragrance enthusiasts in Pakistan the exact beast-mode performance, magnetic cap luxury packaging, and rich aromatic fougère notes without boutique showroom markups.
+					</p>
+
+					<div class="grid sm:grid-cols-2 gap-6">
+						{
+							features.map((feature) => (
+								<FeatureItem {...feature} />
+							))
+						}
+					</div>
+				</div>
+
+				{/* 6. Price Comparison Table & Quick Specs Grid */}
+				<div
+					class="lg:w-1/2 bg-slate-50 rounded-2xl p-8 shadow-sm border border-slate-100"
+				>
+					<h3 class="text-xl font-bold text-gray-900 mb-6">
+						Price & Authenticity Comparison (Pakistan Market)
+					</h3>
+					<div class="space-y-3.5">
+						<div
+							class="flex items-center justify-between p-4 bg-emerald-50 rounded-xl border border-emerald-200 relative overflow-hidden"
+						>
+							<div
+								class="absolute top-0 right-0 bg-emerald-700 text-white text-[10px] uppercase font-bold px-2 py-0.5 rounded-bl-lg"
+							>
+								Verified Authentic
+							</div>
+							<span class="font-bold text-gray-900 text-xs sm:text-sm"
+								>SauvageDior.pk</span
+							>
+							<span class="font-bold text-emerald-700 text-xs sm:text-sm text-right"
+								>Rs. 4,599<br class="sm:hidden" /><span class="text-[11px] font-semibold text-emerald-600 block sm:inline"> (Affordable Price + Authentic Lot)</span></span
+							>
+						</div>
+						<div
+							class="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-100"
+						>
+							<span class="font-medium text-gray-700 text-xs sm:text-sm"
+								>Al-Fatah & Other Malls</span
+							>
+							<span class="text-gray-500 font-medium text-xs sm:text-sm text-right"
+								>Rs. 40,000 – Rs. 45,000</span
+							>
+						</div>
+						<div
+							class="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-100"
+						>
+							<span class="font-medium text-gray-700 text-xs sm:text-sm"
+								>Unverified Social Media Sellers</span
+							>
+							<span class="text-amber-700 font-medium text-xs sm:text-sm text-right"
+								>Rs. 10,000 – Rs. 15,000<br class="sm:hidden" /><span class="text-[11px] text-amber-600 block sm:inline"> (High Risk of Copy)</span></span
+							>
+						</div>
+						<div
+							class="flex items-center justify-between p-4 bg-white rounded-xl border border-gray-100"
+						>
+							<span class="font-medium text-gray-700 text-xs sm:text-sm"
+								>Daraz Sellers</span
+							>
+							<span class="text-red-600 font-semibold text-xs sm:text-sm text-right"
+								>Rs. 1,500 – Rs. 2,000<br class="sm:hidden" /><span class="text-[11px] text-red-500 font-medium block sm:inline"> (Totally Fake)</span></span
+							>
+						</div>
+					</div>
+
+					<div class="mt-8 pt-8 border-t border-gray-200">
+						<h3 class="text-xl font-bold text-gray-900 mb-4">
+							Sauvage 100ml Quick Specifications (E-A-V Entity Model)
+						</h3>
+						<div class="space-y-2">
+							<SpecRow
+								label="Concentration"
+								value="Eau de Parfum (EDP) / Eau de Toilette (EDT)"
+							/>
+							<SpecRow label="Bottle Volume" value="100ml / 3.4 FL.OZ." />
+							<SpecRow
+								label="Longevity"
+								value="12+ Hours on Skin & Clothes"
+							/>
+							<SpecRow
+								label="Cap Mechanism"
+								value="Signature Magnetic Snap Cap"
+							/>
+							<SpecRow
+								label="Fragrance Family"
+								value="Fresh Aromatic Fougère & Woody Amber"
+								isLast
+							/>
+						</div>
+						<div class="mt-6">
+							<Button
+								href="/faq/"
+								variant="outline"
+								class="w-full">View Fragrance FAQs</Button
+							>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	{/* 7. Frequently Asked Questions (FAQ Section) */}
+	<section class="py-14 lg:py-20 bg-slate-50 border-t border-slate-100">
+		<div class="container mx-auto px-4 max-w-3xl">
+			<div class="text-center mb-12">
+				<h2 class="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-4 tracking-tight">
+					Frequently Asked Questions
+				</h2>
+				<p class="text-gray-600">
+					Everything you need to know about purchasing Dior Sauvage in Pakistan.
+				</p>
+			</div>
+
+			<div class="space-y-4">
+				{faqs.map((faq) => <FAQItem {...faq} />)}
+			</div>
+
+			<div class="mt-12 text-center">
+				<Button
+					href="/faq/"
+					className="bg-slate-900 text-white hover:bg-slate-800 px-8 py-3 shadow-md hover:shadow-lg transition-all"
+					>View All FAQs</Button
+				>
+			</div>
+		</div>
+	</section>
+
+	{/* 8. Bottom Conversion Call-to-Action (CTA) Banner */}
+	<section class="py-14 lg:py-20 bg-slate-950 text-white overflow-hidden relative">
+		<div class="absolute inset-0 bg-blue-600/10 blur-3xl pointer-events-none"></div>
+		<div class="container mx-auto px-4 max-w-6xl relative z-10 text-center">
+			<h2 class="text-2xl sm:text-3xl md:text-4xl font-bold mb-4 tracking-tight">
+				Experience the Iconic Dior Sauvage 100ML
+			</h2>
+			<p class="text-slate-300 text-base sm:text-lg mb-8 max-w-2xl mx-auto">
+				Order your Christian Dior Sauvage Eau de Parfum from our brand leftover stock lot today. Enjoy identical monster lasting, 100% Free Express Delivery, Cash on Delivery, and complete open parcel checking warranty across Pakistan.
+			</p>
+			<Button
+				href="#product-showcase"
+				variant="secondary"
+				class="!bg-[#02274F] text-white font-bold hover:!bg-[#011d3b] border border-blue-400/30 shadow-xl transform hover:scale-105 transition-all text-base sm:text-lg h-14 px-10"
+				style="background-color: #02274F !important;"
+			>
+				Order Now – Rs. 4,599
+			</Button>
+		</div>
+	</section>
+</MainLayout>

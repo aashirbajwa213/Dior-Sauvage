@@ -1,0 +1,28 @@
+---
+interface Props {
+    posts: any[];
+}
+
+const { posts = [] } = Astro.props;
+
+const collectionPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "CollectionPage",
+    name: "Blog & Fragrance Guides - Dior Sauvage Pakistan",
+    description:
+        "Read the latest guides, batch code authentication tips, and reviews about Christian Dior Sauvage in Pakistan.",
+    url: Astro.url.href,
+    hasPart: posts.map((post) => ({
+        "@type": "BlogPosting",
+        headline: post.title,
+        url: `https://sauvagedior.pk/blog/${post.slug}/`,
+        datePublished: post.date,
+        description: post.excerpt,
+    })),
+};
+---
+
+<script
+    type="application/ld+json"
+    set:html={JSON.stringify(collectionPageSchema)}
+/>

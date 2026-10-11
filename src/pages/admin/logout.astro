@@ -1,0 +1,13 @@
+---
+import { destroySession } from "../../utils/auth";
+
+const db = (Astro.locals as any).runtime?.env?.DB;
+const sessionId = Astro.cookies.get("gionee_admin_session")?.value;
+
+if (sessionId && db) {
+    await destroySession(db, sessionId);
+}
+
+Astro.cookies.delete("gionee_admin_session", { path: "/" });
+return Astro.redirect("/admin/login");
+---

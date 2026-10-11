@@ -1,0 +1,94 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import FAQItem from "../components/FAQItem.astro";
+import PageHeader from "../components/PageHeader.astro";
+
+const seoTitle = "Dior Sauvage FAQs - Questions About Authenticity, Longevity & Delivery";
+const seoDescription =
+    "Frequently asked questions about Christian Dior Sauvage 100ml in Pakistan. How to verify batch codes, longevity, open parcel checking warranty and Cash on Delivery.";
+
+const faqs = [
+    {
+        question: "What is this Brand Leftover Lot and why is the price so reasonable?",
+        answer: "This is an imported brand leftover stock lot received in bulk surplus inventory. Because brand leftover lots bypass luxury boutique showroom markups and high mall overheads, we are able to provide the exact same fragrance formulation, magnetic cap bottle, and 12+ hours monster lasting at a fair, reasonable price.",
+    },
+    {
+        question: "Does it have the same lasting and projection as the original?",
+        answer: "Yes, 100%! Our brand leftover lot delivers the exact same 12+ hours monster longevity and head-turning projection as retail bottles, featuring identical Calabrian bergamot, magnetic ambroxan, and Papua vanilla notes.",
+    },
+    {
+        question: "Can I inspect the parcel upon delivery before payment (Open Parcel / Checking Warranty)?",
+        answer: "Yes, absolutely! We provide a complete Cash on Delivery Checking Warranty. When the courier rider (TCS or Leopards) arrives, you can verify the parcel, check the security seals, and confirm the item details before handing over payment.",
+    },
+    {
+        question: "How long does Dior Sauvage Eau de Parfum last?",
+        answer: "Dior Sauvage Eau de Parfum has phenomenal beast-mode performance. It delivers 10 to 14+ hours of longevity on skin and often remains noticeable on shirts and jackets for over 24 to 48 hours. Its projection creates an alluring scent bubble that lasts all day.",
+    },
+    {
+        question: "How can I tell the difference between original Sauvage and counterfeit fakes?",
+        answer: "Authentic Dior Sauvage features: 1) A weighted magnetic cap that snaps into alignment with the CD logo upright; 2) A bee icon engraved inside the cap; 3) Matching embossed 4-digit batch codes on the box and bottle bottom; 4) A smooth, micro-mist atomizing spray nozzle rather than a coarse squirt; 5) Rich gradient dark blue-black glass that is semi-translucent when held to light.",
+    },
+    {
+        question: "What is the difference between Sauvage EDT and Sauvage EDP?",
+        answer: "Sauvage Eau de Toilette (EDT) is sharper and more citrus-forward with an airy projection. Sauvage Eau de Parfum (EDP) is richer, smoother, and warmer, enriched with star anise and smoky Papua New Guinean vanilla absolute, offering greater longevity and depth.",
+    },
+    {
+        question: "What are the shipping charges and delivery timeframe in Pakistan?",
+        answer: "We deliver nationwide across Pakistan (Karachi, Lahore, Islamabad, Rawalpindi, Peshawar, Multan, Faisalabad, Sialkot, Quetta, and all other cities) within 2 to 4 working days. Orders placed before 3 PM are dispatched the same day. All bundle packs include 100% FREE delivery!",
+    },
+    {
+        question: "What is your refund or exchange policy?",
+        answer: "We offer a 7-day checking and exchange warranty. If the bottle arrives damaged in transit or does not match our authenticity guarantee, notify our support team on WhatsApp within 7 days for a full replacement or refund.",
+    },
+    {
+        question: "Is Dior Sauvage suitable for all seasons in Pakistan?",
+        answer: "Yes! Sauvage is celebrated worldwide as one of the most versatile fragrances ever made. The crisp bergamot cuts through hot summer afternoons, while the warm ambroxan and vanilla base project magnificently during chilly winter evenings and wedding events.",
+    },
+];
+
+const schema = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: faqs.map((faq) => ({
+        "@type": "Question",
+        name: faq.question,
+        acceptedAnswer: {
+            "@type": "Answer",
+            text: faq.answer,
+        },
+    })),
+};
+---
+
+<MainLayout title={seoTitle} description={seoDescription} schema={schema}>
+    <PageHeader
+        title="Frequently Asked Questions"
+        tagline="Everything you need to know about purchasing authentic Christian Dior Sauvage in Pakistan."
+    />
+
+    <div class="py-16">
+        <div class="container mx-auto px-4 max-w-6xl">
+            <div class="space-y-4">
+                {faqs.map((faq) => <FAQItem {...faq} />)}
+            </div>
+
+            <div
+                class="mt-12 bg-slate-900 text-white rounded-2xl p-8 text-center border border-slate-800 shadow-xl"
+            >
+                <h3 class="font-bold text-white text-xl mb-2">
+                    Have more questions or need batch code assistance?
+                </h3>
+                <p class="text-slate-300 mb-6 max-w-lg mx-auto text-sm">
+                    Our fragrance specialists are available on WhatsApp to answer your questions and assist with your order.
+                </p>
+                <a
+                    href="/contact/"
+                    class="inline-flex items-center justify-center rounded-xl font-bold transition-all !bg-[#02274F] text-white hover:!bg-[#011d3b] h-11 px-7 shadow-lg border border-blue-400/30"
+                    style="background-color: #02274F !important;"
+                >
+                    Contact Fragrance Support
+                </a>
+            </div>
+        </div>
+    </div>
+</MainLayout>

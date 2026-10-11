@@ -1,0 +1,899 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+import Pagination from "../../components/admin/Pagination.astro";
+import ColumnSelector from "../../components/admin/ColumnSelector.astro";
+
+const trackingColumns = [
+    { id: "order_num", label: "Order Num", defaultVisible: true },
+    { id: "customer", label: "Customer", defaultVisible: true },
+    { id: "tracking", label: "Tracking ID", defaultVisible: true },
+    { id: "amount", label: "Amount", defaultVisible: true },
+    { id: "order_status", label: "Order Status", defaultVisible: true },
+    { id: "status", label: "Payment/Return Status", defaultVisible: true },
+    { id: "summary", label: "Summary", defaultVisible: true },
+    { id: "notes", label: "Notes", defaultVisible: true },
+];
+
+const db = Astro.locals.runtime?.env?.DB;
+let errorMsg = "";
+let successMsg = "";
+
+const url = new URL(Astro.request.url);
+const currentTab = url.searchParams.get("tab") || "payments"; // 'payments' or 'returns'
+
+const page = parseInt(url.searchParams.get("page") || "1");
+const limit = parseInt(url.searchParams.get("limit") || "20");
+const offset = (page - 1) * limit;
+
+const period = url.searchParams.get("period") || "all";
+const statusFilter = url.searchParams.get("status") || "all";
+const customStart = url.searchParams.get("start") || "";
+const customEnd = url.searchParams.get("end") || "";
+
+let nowPktStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+let startDate = new Date(nowPktStr);
+let endDate = new Date(nowPktStr);
+
+if (period === "today") {
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "yesterday") {
+    startDate.setDate(startDate.getDate() - 1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "this_week") {
+    const day = startDate.getDay();
+    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+    startDate.setDate(diff);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "this_month") {
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "last_30_days") {
+    startDate.setDate(startDate.getDate() - 30);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "custom" && customStart && customEnd) {
+    startDate = new Date(customStart + "T00:00:00");
+    endDate = new Date(customEnd + "T23:59:59");
+}
+
+const PKT_OFFSET = 5 * 60 * 60 * 1000;
+startDate.setTime(startDate.getTime() - PKT_OFFSET);
+endDate.setTime(endDate.getTime() - PKT_OFFSET);
+
+const startStr = startDate.toISOString();
+const endStr = endDate.toISOString();
+
+let totalPages = 1;
+let totalItems = 0;
+
+// Handle Form Submissions (POST)
+if (Astro.request.method === "POST" && db) {
+    try {
+        const formData = await Astro.request.formData();
+        const action = formData.get("action")?.toString();
+        const orderId = formData.get("order_id")?.toString();
+
+        if (action === "update_payment" && orderId) {
+            const paymentStatus = formData.get("payment_status")?.toString();
+            await db.prepare("UPDATE orders SET payment_status = ? WHERE id = ?").bind(paymentStatus, orderId).run();
+            successMsg = `Payment status updated for Order #${orderId}`;
+        } else if (action === "update_return" && orderId) {
+            const returnStatus = formData.get("return_status")?.toString();
+            await db.prepare("UPDATE orders SET return_status = ? WHERE id = ?").bind(returnStatus, orderId).run();
+            successMsg = `Return status updated for Order #${orderId}`;
+        } else if (action === "update_notes" && orderId) {
+            const notes = formData.get("tracking_notes")?.toString();
+            await db.prepare("UPDATE orders SET tracking_notes = ? WHERE id = ?").bind(notes, orderId).run();
+            successMsg = `Notes updated for Order #${orderId}`;
+        } else if (action === "bulk_update_payment") {
+            const orderIdsStr = formData.get("order_ids")?.toString() || "";
+            const paymentStatus = formData.get("payment_status")?.toString();
+            const orderIds = orderIdsStr.split(",").filter(id => id.trim() !== "");
+            if (orderIds.length > 0 && paymentStatus) {
+                for (const id of orderIds) {
+                    await db.prepare("UPDATE orders SET payment_status = ? WHERE id = ?").bind(paymentStatus, id).run();
+                }
+                successMsg = `Payment status updated for ${orderIds.length} orders.`;
+            }
+        } else if (action === "bulk_update_return") {
+            const orderIdsStr = formData.get("order_ids")?.toString() || "";
+            const returnStatus = formData.get("return_status")?.toString();
+            const orderIds = orderIdsStr.split(",").filter(id => id.trim() !== "");
+            if (orderIds.length > 0 && returnStatus) {
+                for (const id of orderIds) {
+                    await db.prepare("UPDATE orders SET return_status = ? WHERE id = ?").bind(returnStatus, id).run();
+                }
+                successMsg = `Return status updated for ${orderIds.length} orders.`;
+            }
+        }
+    } catch (e: any) {
+        errorMsg = "Update failed: " + e.message;
+    }
+}
+
+// Fetch Data
+let orders: any[] = [];
+let paymentKpis = { pending: { count: 0, total: 0 }, invoiced: { count: 0, total: 0 }, receiving: { count: 0, total: 0 }, sent: { count: 0, total: 0 } };
+let returnKpis = { 
+    pending: 0, 
+    received: 0, 
+    pending_value: 0, 
+    received_value: 0, 
+    total_value: 0 
+};
+let oldestPendingPayments: any[] = [];
+let oldestPendingReturns: any[] = [];
+let productBreakdown: any[] = [];
+let totalPieces = 0;
+let pendingPieces = 0;
+let receivedPieces = 0;
+let totalPipelineValue = 0;
+
+if (db) {
+    try {
+        let dateCondition = "";
+        let params: any[] = [];
+        
+        if (period !== 'all') {
+            dateCondition = " AND DATETIME(o.created_at) >= DATETIME(?) AND DATETIME(o.created_at) <= DATETIME(?)";
+            params.push(startStr, endStr);
+        }
+
+        if (currentTab === "payments") {
+            let statusCondition = "";
+            if (statusFilter !== "all") {
+                statusCondition = " AND COALESCE(o.payment_status, 'Pending') = ?";
+                params.push(statusFilter);
+            }
+            const countStmt = db.prepare(`SELECT COUNT(*) as count FROM orders o WHERE o.status = 'Delivered' ${dateCondition} ${statusCondition}`);
+            const { results: countResults } = params.length ? await countStmt.bind(...params).all() : await countStmt.all();
+            
+            totalItems = countResults[0]?.count || 0;
+            totalPages = Math.ceil(totalItems / limit) || 1;
+
+            const stmt = db.prepare(`SELECT o.*, (SELECT GROUP_CONCAT(quantity || 'x ' || product_name, CHAR(10)) FROM order_items WHERE order_id = o.id) as items_summary FROM orders o WHERE o.status = 'Delivered' ${dateCondition} ${statusCondition} ORDER BY o.created_at DESC LIMIT ? OFFSET ?`);
+            const { results } = await stmt.bind(...params, limit, offset).all();
+            orders = results || [];
+
+            // Fetch Payments KPIs
+            const kpiStmt = db.prepare(`SELECT COALESCE(o.payment_status, 'Pending') as p_status, COUNT(*) as count, SUM(o.total_amount) as total FROM orders o WHERE o.status = 'Delivered' ${dateCondition} ${statusCondition} GROUP BY COALESCE(o.payment_status, 'Pending')`);
+            const { results: kpiResults } = params.length ? await kpiStmt.bind(...params).all() : await kpiStmt.all();
+            kpiResults?.forEach((row: any) => {
+                if (row.p_status === 'Pending') paymentKpis.pending = { count: row.count, total: row.total || 0 };
+                if (row.p_status === 'Invoiced') paymentKpis.invoiced = { count: row.count, total: row.total || 0 };
+                if (row.p_status === 'Receiving in Bank') paymentKpis.receiving = { count: row.count, total: row.total || 0 };
+                if (row.p_status === 'Sent to Vendor') paymentKpis.sent = { count: row.count, total: row.total || 0 };
+            });
+
+            // Product Pieces & Value Breakdown for Delivered/Payments
+            const prodStmt = db.prepare(`
+                SELECT 
+                    oi.product_name as name, 
+                    SUM(oi.quantity) as quantity, 
+                    SUM(oi.quantity * oi.unit_price) as total_value,
+                    COUNT(DISTINCT o.id) as order_count
+                FROM order_items oi
+                JOIN orders o ON oi.order_id = o.id
+                WHERE o.status = 'Delivered' ${dateCondition} ${statusCondition}
+                GROUP BY oi.product_name
+                ORDER BY quantity DESC
+                LIMIT 8
+            `);
+            const { results: prodResults } = params.length ? await prodStmt.bind(...params).all() : await prodStmt.all();
+            productBreakdown = prodResults || [];
+            totalPieces = productBreakdown.reduce((sum, p) => sum + (parseInt(p.quantity) || 0), 0);
+            totalPipelineValue = (paymentKpis.pending.total || 0) + (paymentKpis.invoiced.total || 0) + (paymentKpis.receiving.total || 0) + (paymentKpis.sent.total || 0);
+
+            // Fetch Top 5 Oldest Pending Invoices
+            const oldestStmt = db.prepare(`SELECT o.id, o.created_at as delivered_date, CAST(julianday('now') - julianday(o.created_at) AS INTEGER) as days_old, o.total_amount FROM orders o WHERE o.status = 'Delivered' AND COALESCE(o.payment_status, 'Pending') = 'Pending' ${dateCondition} ${statusCondition} ORDER BY o.created_at ASC LIMIT 5`);
+            const { results: oldestResults } = params.length ? await oldestStmt.bind(...params).all() : await oldestStmt.all();
+            oldestPendingPayments = oldestResults || [];
+        } else if (currentTab === "returns") {
+            let statusCondition = "";
+            if (statusFilter !== "all") {
+                statusCondition = " AND COALESCE(o.return_status, 'Pending') = ?";
+                params.push(statusFilter);
+            }
+            const countStmt = db.prepare(`SELECT COUNT(*) as count FROM orders o WHERE o.status = 'Returned' ${dateCondition} ${statusCondition}`);
+            const { results: countResults } = params.length ? await countStmt.bind(...params).all() : await countStmt.all();
+            
+            totalItems = countResults[0]?.count || 0;
+            totalPages = Math.ceil(totalItems / limit) || 1;
+
+            const stmt = db.prepare(`SELECT o.*, (SELECT GROUP_CONCAT(quantity || 'x ' || product_name, CHAR(10)) FROM order_items WHERE order_id = o.id) as items_summary FROM orders o WHERE o.status = 'Returned' ${dateCondition} ${statusCondition} ORDER BY o.created_at DESC LIMIT ? OFFSET ?`);
+            const { results } = await stmt.bind(...params, limit, offset).all();
+            orders = results || [];
+
+            // Fetch Returns KPIs (including money value locked in returns)
+            const kpiStmt = db.prepare(`SELECT COALESCE(o.return_status, 'Pending') as r_status, COUNT(*) as count, SUM(o.total_amount) as total FROM orders o WHERE o.status = 'Returned' ${dateCondition} ${statusCondition} GROUP BY COALESCE(o.return_status, 'Pending')`);
+            const { results: kpiResults } = params.length ? await kpiStmt.bind(...params).all() : await kpiStmt.all();
+            kpiResults?.forEach((row: any) => {
+                if (row.r_status === 'Pending') {
+                    returnKpis.pending = row.count;
+                    returnKpis.pending_value = row.total || 0;
+                }
+                if (row.r_status === 'Received') {
+                    returnKpis.received = row.count;
+                    returnKpis.received_value = row.total || 0;
+                }
+            });
+            returnKpis.total_value = (returnKpis.pending_value || 0) + (returnKpis.received_value || 0);
+
+            // Product Pieces & Status Breakdown for Returned items (Pending Pickup vs Received)
+            const prodStmt = db.prepare(`
+                SELECT 
+                    oi.product_name as name, 
+                    SUM(oi.quantity) as quantity, 
+                    SUM(CASE WHEN COALESCE(o.return_status, 'Pending') = 'Pending' THEN oi.quantity ELSE 0 END) as pending_quantity,
+                    SUM(CASE WHEN COALESCE(o.return_status, 'Pending') = 'Received' THEN oi.quantity ELSE 0 END) as received_quantity,
+                    SUM(oi.quantity * oi.unit_price) as total_value,
+                    SUM(CASE WHEN COALESCE(o.return_status, 'Pending') = 'Pending' THEN (oi.quantity * oi.unit_price) ELSE 0 END) as pending_value,
+                    COUNT(DISTINCT o.id) as order_count,
+                    COUNT(DISTINCT CASE WHEN COALESCE(o.return_status, 'Pending') = 'Pending' THEN o.id ELSE NULL END) as pending_orders
+                FROM order_items oi
+                JOIN orders o ON oi.order_id = o.id
+                WHERE o.status = 'Returned' ${dateCondition} ${statusCondition}
+                GROUP BY oi.product_name
+                ORDER BY pending_quantity DESC, quantity DESC
+                LIMIT 10
+            `);
+            const { results: prodResults } = params.length ? await prodStmt.bind(...params).all() : await prodStmt.all();
+            productBreakdown = prodResults || [];
+            totalPieces = productBreakdown.reduce((sum, p) => sum + (parseInt(p.quantity) || 0), 0);
+            pendingPieces = productBreakdown.reduce((sum, p) => sum + (parseInt(p.pending_quantity) || 0), 0);
+            receivedPieces = productBreakdown.reduce((sum, p) => sum + (parseInt(p.received_quantity) || 0), 0);
+            totalPipelineValue = returnKpis.total_value;
+
+            // Fetch Top 5 Oldest Pending Pickups
+            const oldestStmt = db.prepare(`SELECT o.id, o.created_at as return_date, CAST(julianday('now') - julianday(o.created_at) AS INTEGER) as days_waiting, o.total_amount FROM orders o WHERE o.status = 'Returned' AND COALESCE(o.return_status, 'Pending') = 'Pending' ${dateCondition} ${statusCondition} ORDER BY o.created_at ASC LIMIT 5`);
+            const { results: oldestResults } = params.length ? await oldestStmt.bind(...params).all() : await oldestStmt.all();
+            oldestPendingReturns = oldestResults || [];
+        }
+    } catch (e: any) {
+        errorMsg = "Database error: " + e.message;
+    }
+}
+
+function getPaymentBadge(status: string) {
+    switch (status) {
+        case 'Invoiced': return 'bg-blue-50 text-blue-700 border-blue-200';
+        case 'Receiving in Bank': return 'bg-amber-50 text-amber-700 border-amber-200';
+        case 'Sent to Vendor': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        default: return 'bg-gray-50 text-gray-700 border-gray-200'; // Pending
+    }
+}
+
+function getReturnBadge(status: string) {
+    switch (status) {
+        case 'Received': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        default: return 'bg-gray-50 text-gray-700 border-gray-200'; // Pending
+    }
+}
+
+function getOrderBadge(status: string) {
+    switch (status) {
+        case "Delivered": return "bg-emerald-50 text-emerald-700 border-emerald-200";
+        case "Returned": return "bg-rose-50 text-rose-700 border-rose-200";
+        case "Cancelled": return "bg-gray-50 text-gray-700 border-gray-200";
+        default: return "bg-gray-50 text-gray-700 border-gray-200";
+    }
+}
+---
+
+<AdminLayout title="Payments & Returns Tracking - Dior Sauvage Admin" activePage="tracking">
+    <div class="flex flex-col md:flex-row justify-between items-start gap-4 mb-6">
+        <div>
+            <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">Payments & Return</h1>
+            <p class="text-gray-500 mt-1">Track delivered order payments and manage warehouse returns.</p>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="bg-white p-2 md:p-3 rounded-lg border border-gray-100 shadow-sm w-full md:w-auto">
+            <form method="GET" class="flex flex-col sm:flex-row gap-2">
+                <input type="hidden" name="tab" value={currentTab} />
+                <div class="min-w-[160px]">
+                    <select
+                        name="status"
+                        class="w-full pl-3 pr-10 py-2 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                    >
+                        <option value="all" selected={statusFilter === 'all'}>All Statuses</option>
+                        {currentTab === 'payments' ? (
+                            <>
+                                <option value="Pending" selected={statusFilter === 'Pending'}>Pending</option>
+                                <option value="Invoiced" selected={statusFilter === 'Invoiced'}>Invoiced</option>
+                                <option value="Receiving in Bank" selected={statusFilter === 'Receiving in Bank'}>Receiving in Bank</option>
+                                <option value="Sent to Vendor" selected={statusFilter === 'Sent to Vendor'}>Sent to Vendor</option>
+                            </>
+                        ) : (
+                            <>
+                                <option value="Pending" selected={statusFilter === 'Pending'}>Pending</option>
+                                <option value="Received" selected={statusFilter === 'Received'}>Received</option>
+                            </>
+                        )}
+                    </select>
+                </div>
+                <div class="min-w-[180px]">
+                    <select
+                        name="period"
+                        id="period-select"
+                        class="w-full pl-3 pr-10 py-2 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                    >
+                        <option value="all" selected={period === 'all'}>All Time</option>
+                        <option value="today" selected={period === 'today'}>Today</option>
+                        <option value="yesterday" selected={period === 'yesterday'}>Yesterday</option>
+                        <option value="this_week" selected={period === 'this_week'}>This Week</option>
+                        <option value="this_month" selected={period === 'this_month'}>This Month</option>
+                        <option value="last_30_days" selected={period === 'last_30_days'}>Last 30 Days</option>
+                        <option value="custom" selected={period === 'custom'}>Custom Range...</option>
+                    </select>
+                </div>
+                <div id="custom-date-inputs" class={`flex items-center gap-2 ${period === 'custom' ? '' : 'hidden'}`}>
+                    <input type="date" name="start" value={customStart} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-[120px]" required={period === 'custom'} />
+                    <span class="text-gray-400 text-sm">to</span>
+                    <input type="date" name="end" value={customEnd} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-[120px]" required={period === 'custom'} />
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" class="px-5 py-2 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md text-sm transition-colors shadow-sm active:scale-[0.98]">
+                        Filter
+                    </button>
+                    {period !== 'all' && (
+                        <a href={`/admin/tracking/?tab=${currentTab}`} class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-md text-sm transition-colors flex items-center justify-center" title="Clear filters">
+                            Reset
+                        </a>
+                    )}
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Error/Success Messages -->
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-6 flex items-start gap-3">
+            <div class="bg-red-100 text-red-800 p-1 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4 text-red-600" />
+            </div>
+            <p class="text-sm mt-0.5">{errorMsg}</p>
+        </div>
+    )}
+    {successMsg && (
+        <div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-green-100 text-green-800 p-1 rounded-full shrink-0">
+                <Icon name="check" class="w-4 h-4 text-green-600" />
+            </div>
+            <p class="text-sm mt-0.5">{successMsg}</p>
+        </div>
+    )}
+
+    <!-- Navigation Tabs (Matching AI Chatbot Pill Tab Style) -->
+    <div class="mb-6 p-1.5 bg-gray-100/90 rounded-2xl border border-gray-200/80 flex flex-wrap items-center gap-1.5">
+        <a 
+            href={`?tab=payments${period !== 'all' ? `&period=${period}` : ''}${statusFilter !== 'all' ? `&status=${statusFilter}` : ''}${customStart ? `&start=${customStart}` : ''}${customEnd ? `&end=${customEnd}` : ''}`} 
+            class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${currentTab === 'payments' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}
+        >
+            <Icon name="credit-card" class={`w-4 h-4 shrink-0 ${currentTab === 'payments' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Delivered Orders (Payments)</span>
+        </a>
+        <a 
+            href={`?tab=returns${period !== 'all' ? `&period=${period}` : ''}${statusFilter !== 'all' ? `&status=${statusFilter}` : ''}${customStart ? `&start=${customStart}` : ''}${customEnd ? `&end=${customEnd}` : ''}`} 
+            class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${currentTab === 'returns' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}
+        >
+            <Icon name="rotate-ccw" class={`w-4 h-4 shrink-0 ${currentTab === 'returns' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Returned Orders (Pickups)</span>
+        </a>
+    </div>
+
+    <!-- Dashboard Enhancements -->
+    {currentTab === 'payments' ? (
+        <div class="mb-6 space-y-6">
+            <!-- Payment Pipeline KPI Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div class="bg-white border border-rose-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-rose-500 uppercase tracking-wider mb-1">Pending Invoice</p>
+                    <p class="text-2xl font-bold text-gray-900">{paymentKpis.pending.count}</p>
+                    <p class="text-sm font-semibold text-rose-600 mt-1">PKR {paymentKpis.pending.total.toLocaleString()}</p>
+                </div>
+                <div class="bg-white border border-blue-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-blue-500 uppercase tracking-wider mb-1">Invoiced</p>
+                    <p class="text-2xl font-bold text-gray-900">{paymentKpis.invoiced.count}</p>
+                    <p class="text-sm font-semibold text-blue-600 mt-1">PKR {paymentKpis.invoiced.total.toLocaleString()}</p>
+                </div>
+                <div class="bg-white border border-amber-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-1">Receiving In Bank</p>
+                    <p class="text-2xl font-bold text-gray-900">{paymentKpis.receiving.count}</p>
+                    <p class="text-sm font-semibold text-amber-600 mt-1">PKR {paymentKpis.receiving.total.toLocaleString()}</p>
+                </div>
+                <div class="bg-white border border-emerald-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-emerald-500 uppercase tracking-wider mb-1">Sent to Vendor</p>
+                    <p class="text-2xl font-bold text-gray-900">{paymentKpis.sent.count}</p>
+                    <p class="text-sm font-semibold text-emerald-600 mt-1">PKR {paymentKpis.sent.total.toLocaleString()}</p>
+                </div>
+                <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4 rounded-xl shadow-sm flex flex-col justify-center col-span-2 md:col-span-1">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Delivered Pipeline</p>
+                    <p class="text-2xl font-bold text-brand-orange">{totalPieces} <span class="text-xs text-gray-300 font-normal">Pieces</span></p>
+                    <p class="text-sm font-semibold text-white mt-1">PKR {totalPipelineValue.toLocaleString()}</p>
+                </div>
+            </div>
+
+            <!-- Analytics Split: Product Pieces Breakdown & Aging Invoices -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Product Breakdown (Pieces & Locked Money) -->
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                    <div class="px-5 py-3.5 border-b border-gray-100 bg-gray-50/70 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <Icon name="package" class="w-4 h-4 text-brand-orange" />
+                            <h3 class="font-bold text-gray-800 text-sm">Product Pieces & Value Breakdown</h3>
+                        </div>
+                        <span class="text-xs font-semibold bg-white border border-gray-200 px-2 py-0.5 rounded text-gray-600">
+                            {totalPieces} Pieces Total
+                        </span>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="text-gray-400 uppercase bg-white border-b border-gray-50">
+                                    <th class="py-2.5 px-4 font-semibold">Product Name</th>
+                                    <th class="py-2.5 px-4 text-center font-semibold">Orders</th>
+                                    <th class="py-2.5 px-4 text-center font-semibold">Pieces</th>
+                                    <th class="py-2.5 px-4 text-right font-semibold">Total Value</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-50">
+                                {productBreakdown.length === 0 ? (
+                                    <tr>
+                                        <td colspan="4" class="p-6 text-center text-gray-400">No product item data found for this period.</td>
+                                    </tr>
+                                ) : (
+                                    productBreakdown.map(p => (
+                                        <tr class="hover:bg-gray-50/50">
+                                            <td class="py-2.5 px-4 font-medium text-gray-900 max-w-[200px] truncate" title={p.name}>
+                                                {p.name}
+                                            </td>
+                                            <td class="py-2.5 px-4 text-center text-gray-600 font-medium">{p.order_count}</td>
+                                            <td class="py-2.5 px-4 text-center">
+                                                <span class="bg-indigo-50 text-indigo-700 font-bold px-2 py-0.5 rounded border border-indigo-100">
+                                                    {p.quantity} pcs
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 px-4 text-right font-semibold text-gray-900">
+                                                PKR {Math.round(p.total_value).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Action Widget: Top 5 Oldest Pending Invoices -->
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                    <div class="px-5 py-3.5 border-b border-gray-100 bg-gray-50/70 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <Icon name="clock" class="w-4 h-4 text-rose-500" />
+                            <h3 class="font-bold text-gray-800 text-sm">Oldest Pending Invoices (Action Needed)</h3>
+                        </div>
+                        <span class="text-xs font-semibold bg-rose-50 border border-rose-100 px-2 py-0.5 rounded text-rose-700">
+                            {oldestPendingPayments.length} Priority
+                        </span>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="text-gray-400 uppercase bg-white border-b border-gray-50">
+                                    <th class="py-2.5 px-4 font-semibold">Order #</th>
+                                    <th class="py-2.5 px-4 font-semibold">Delivered Date</th>
+                                    <th class="py-2.5 px-4 font-semibold">Days Old</th>
+                                    <th class="py-2.5 px-4 text-right font-semibold">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-50">
+                                {oldestPendingPayments.length === 0 ? (
+                                    <tr>
+                                        <td colspan="4" class="p-6 text-center text-gray-400">No overdue pending invoices. Great job!</td>
+                                    </tr>
+                                ) : (
+                                    oldestPendingPayments.map(op => (
+                                        <tr class="hover:bg-gray-50/50">
+                                            <td class="py-2.5 px-4 font-bold text-brand-orange">
+                                                <a href={`/admin/orders/${op.id}/`} class="hover:underline">#{op.id}</a>
+                                            </td>
+                                            <td class="py-2.5 px-4 text-gray-600">{new Date(op.delivered_date).toISOString().split('T')[0]}</td>
+                                            <td class="py-2.5 px-4">
+                                                <span class="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-bold border border-rose-100">
+                                                    {op.days_old} Days
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 px-4 text-right font-semibold text-gray-900">PKR {op.total_amount.toLocaleString()}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    ) : (
+        <div class="mb-6 space-y-6">
+            <!-- Return Financial & Volume KPI Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white border-2 border-rose-400 p-4 rounded-xl shadow-sm flex flex-col justify-center relative overflow-hidden bg-rose-50/20">
+                    <div class="flex items-center justify-between mb-1">
+                        <p class="text-xs font-bold text-rose-600 uppercase tracking-wider">Pending Pickup</p>
+                        <span class="text-[10px] font-bold bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200">
+                            {pendingPieces} Pcs
+                        </span>
+                    </div>
+                    <p class="text-2xl font-bold text-gray-900">{returnKpis.pending} <span class="text-xs text-gray-400 font-normal">Orders</span></p>
+                    <p class="text-sm font-bold text-rose-600 mt-1">PKR {returnKpis.pending_value.toLocaleString()}</p>
+                </div>
+                <div class="bg-white border border-emerald-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <div class="flex items-center justify-between mb-1">
+                        <p class="text-xs font-semibold text-emerald-500 uppercase tracking-wider">Received Back</p>
+                        <span class="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200">
+                            {receivedPieces} Pcs
+                        </span>
+                    </div>
+                    <p class="text-2xl font-bold text-gray-900">{returnKpis.received} <span class="text-xs text-gray-400 font-normal">Orders</span></p>
+                    <p class="text-sm font-semibold text-emerald-600 mt-1">PKR {returnKpis.received_value.toLocaleString()}</p>
+                </div>
+                <div class="bg-white border border-gray-200 p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Total Return Pipeline</p>
+                    <p class="text-2xl font-bold text-gray-900">{returnKpis.pending + returnKpis.received} <span class="text-xs text-gray-400 font-normal">Orders</span></p>
+                    <p class="text-sm font-semibold text-gray-700 mt-1">PKR {returnKpis.total_value.toLocaleString()} <span class="text-xs font-normal text-gray-500">locked</span></p>
+                </div>
+                <div class="bg-gradient-to-br from-gray-900 to-gray-800 text-white p-4 rounded-xl shadow-sm flex flex-col justify-center">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Total Pieces</p>
+                    <p class="text-2xl font-bold text-brand-orange">{totalPieces} <span class="text-xs text-gray-300 font-normal">Pieces</span></p>
+                    <p class="text-xs text-gray-300 mt-1">Pending: <span class="font-bold text-rose-300">{pendingPieces} pcs</span> · Received: <span class="font-bold text-emerald-300">{receivedPieces} pcs</span></p>
+                </div>
+            </div>
+
+            <!-- Analytics Split: Returned Product Pieces Breakdown & Oldest Pending Returns -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Returned Product Breakdown (Which items are returning and how many pieces) -->
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                    <div class="px-5 py-3.5 border-b border-gray-100 bg-gray-50/70 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <Icon name="package" class="w-4 h-4 text-rose-500" />
+                            <h3 class="font-bold text-gray-800 text-sm">Returned Pieces by Product</h3>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[11px] font-bold bg-rose-50 border border-rose-200 px-2 py-0.5 rounded text-rose-700">
+                                {pendingPieces} Pcs Pending
+                            </span>
+                            <span class="text-[11px] font-medium bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-emerald-700">
+                                {receivedPieces} Pcs Received
+                            </span>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="text-gray-400 uppercase bg-white border-b border-gray-50">
+                                    <th class="py-2.5 px-4 font-semibold">Product Name</th>
+                                    <th class="py-2.5 px-3 text-center font-semibold text-rose-600 bg-rose-50/50">Pending Pickup</th>
+                                    <th class="py-2.5 px-3 text-center font-semibold text-emerald-600 bg-emerald-50/30">Received</th>
+                                    <th class="py-2.5 px-3 text-center font-semibold">Total Pcs</th>
+                                    <th class="py-2.5 px-4 text-right font-semibold">Pending Value</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-50">
+                                {productBreakdown.length === 0 ? (
+                                    <tr>
+                                        <td colspan="5" class="p-6 text-center text-gray-400">No returned product items found for this period.</td>
+                                    </tr>
+                                ) : (
+                                    productBreakdown.map(p => (
+                                        <tr class="hover:bg-gray-50/50">
+                                            <td class="py-2.5 px-4 font-medium text-gray-900 max-w-[180px] truncate" title={p.name}>
+                                                {p.name}
+                                                <div class="text-[10px] text-gray-400 font-normal">{p.order_count} orders total</div>
+                                            </td>
+                                            <td class="py-2.5 px-3 text-center bg-rose-50/30">
+                                                <span class={`font-bold px-2 py-0.5 rounded text-xs border ${p.pending_quantity > 0 ? 'bg-rose-100 text-rose-800 border-rose-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                                                    {p.pending_quantity} pcs
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 px-3 text-center bg-emerald-50/20">
+                                                <span class="text-gray-600 font-medium px-2 py-0.5 rounded text-xs">
+                                                    {p.received_quantity} pcs
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 px-3 text-center font-bold text-gray-800">
+                                                {p.quantity} pcs
+                                            </td>
+                                            <td class="py-2.5 px-4 text-right font-bold text-rose-600">
+                                                PKR {Math.round(p.pending_value || 0).toLocaleString()}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Action Widget: Top 5 Oldest Returns Pending Pickup -->
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                    <div class="px-5 py-3.5 border-b border-gray-100 bg-gray-50/70 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <Icon name="clock" class="w-4 h-4 text-orange-500" />
+                            <h3 class="font-bold text-gray-800 text-sm">Oldest Returns Pending Pickup</h3>
+                        </div>
+                        <span class="text-xs font-semibold bg-orange-50 border border-orange-100 px-2 py-0.5 rounded text-orange-700">
+                            {oldestPendingReturns.length} Pending
+                        </span>
+                    </div>
+                    <div class="overflow-x-auto flex-1">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="text-gray-400 uppercase bg-white border-b border-gray-50">
+                                    <th class="py-2.5 px-4 font-semibold">Order #</th>
+                                    <th class="py-2.5 px-4 font-semibold">Return Date</th>
+                                    <th class="py-2.5 px-4 font-semibold">Days Waiting</th>
+                                    <th class="py-2.5 px-4 text-right font-semibold">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-50">
+                                {oldestPendingReturns.length === 0 ? (
+                                    <tr>
+                                        <td colspan="4" class="p-6 text-center text-gray-400">No pending return pickups waiting.</td>
+                                    </tr>
+                                ) : (
+                                    oldestPendingReturns.map(or => (
+                                        <tr class="hover:bg-gray-50/50">
+                                            <td class="py-2.5 px-4 font-bold text-brand-orange">
+                                                <a href={`/admin/orders/${or.id}/`} class="hover:underline">#{or.id}</a>
+                                            </td>
+                                            <td class="py-2.5 px-4 text-gray-600">{new Date(or.return_date).toISOString().split('T')[0]}</td>
+                                            <td class="py-2.5 px-4">
+                                                <span class="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-bold border border-rose-100">
+                                                    {or.days_waiting} Days
+                                                </span>
+                                            </td>
+                                            <td class="py-2.5 px-4 text-right font-semibold text-gray-900">PKR {or.total_amount ? or.total_amount.toLocaleString() : '0'}</td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- Data Table -->
+    <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+            <span class="text-xs font-bold text-gray-700 uppercase tracking-wider">{totalItems} Records</span>
+            <ColumnSelector tableId="tracking-table" storageKey="admin_tracking_cols" columns={trackingColumns} />
+        </div>
+        <div class="overflow-x-auto">
+            <table id="tracking-table" class="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="p-4 w-12"><input type="checkbox" id="selectAll" class="rounded text-brand-orange focus:ring-brand-orange cursor-pointer" /></th>
+                        <th class="p-4 w-28" data-col="order_num">Order Num</th>
+                        <th class="p-4" data-col="customer">Customer</th>
+                        <th class="p-4" data-col="tracking">Tracking ID</th>
+                        <th class="p-4" data-col="amount">Amount</th>
+                        <th class="p-4" data-col="order_status">Order Status</th>
+                        {currentTab === 'payments' ? (
+                            <th class="p-4" data-col="status">Payment Status</th>
+                        ) : (
+                            <th class="p-4" data-col="status">Return Status</th>
+                        )}
+                        <th class="p-4" data-col="summary">Summary</th>
+                        <th class="p-4 w-64" data-col="notes">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-sm text-gray-800">
+                    {orders.length === 0 ? (
+                        <tr>
+                            <td colspan="9" class="p-8 text-center text-gray-500">
+                                <p class="font-semibold text-gray-800">No Orders Found</p>
+                                <p class="text-xs text-gray-400 mt-1">There are no orders matching this tab right now.</p>
+                            </td>
+                        </tr>
+                    ) : (
+                        orders.map((order) => (
+                            <tr class="hover:bg-gray-50/50 transition-colors group">
+                                <td class="p-4"><input type="checkbox" class="row-checkbox rounded text-brand-orange focus:ring-brand-orange cursor-pointer" value={order.id} /></td>
+                                <td class="p-4 font-semibold text-brand-orange tracking-wider" data-col="order_num">
+                                    <a href={`/admin/orders/${order.id}/`} class="hover:underline">#{order.id}</a>
+                                </td>
+                                <td class="p-4" data-col="customer">
+                                    <div class="font-medium text-gray-900">{order.customer_name}</div>
+                                    <div class="text-xs text-gray-500">{order.customer_phone}</div>
+                                </td>
+                                <td class="p-4" data-col="tracking">
+                                    {order.tracking_no ? (
+                                        <span class="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{order.tracking_no}</span>
+                                    ) : (
+                                        <span class="text-xs text-gray-400 font-medium">-</span>
+                                    )}
+                                </td>
+                                <td class="p-4 font-medium text-gray-900" data-col="amount">
+                                    PKR {order.total_amount.toLocaleString()}
+                                </td>
+                                <td class="p-4" data-col="order_status">
+                                    <span class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getOrderBadge(order.status)}`}>
+                                        {order.status}
+                                    </span>
+                                </td>
+                                <td class="p-4" data-col="status">
+                                    {currentTab === 'payments' ? (
+                                        <form method="POST" class="inline-block relative">
+                                            <input type="hidden" name="action" value="update_payment" />
+                                            <input type="hidden" name="order_id" value={order.id} />
+                                            <select 
+                                                name="payment_status" 
+                                                onchange="this.form.submit()" 
+                                                class={`inline-flex items-center pl-3 pr-8 py-1.5 rounded-md text-xs font-semibold border focus:outline-none focus:ring-2 focus:ring-brand-orange/20 cursor-pointer appearance-none ${getPaymentBadge(order.payment_status)}`}
+                                                style="background-position: right 0.4rem center; background-size: 1rem 1rem;"
+                                            >
+                                                <option value="Pending" selected={order.payment_status === 'Pending' || !order.payment_status}>Pending</option>
+                                                <option value="Invoiced" selected={order.payment_status === 'Invoiced'}>Invoiced</option>
+                                                <option value="Receiving in Bank" selected={order.payment_status === 'Receiving in Bank'}>Receiving in Bank</option>
+                                                <option value="Sent to Vendor" selected={order.payment_status === 'Sent to Vendor'}>Sent to Vendor</option>
+                                            </select>
+                                        </form>
+                                    ) : (
+                                        <form method="POST" class="inline-block relative">
+                                            <input type="hidden" name="action" value="update_return" />
+                                            <input type="hidden" name="order_id" value={order.id} />
+                                            <select 
+                                                name="return_status" 
+                                                onchange="this.form.submit()" 
+                                                class={`inline-flex items-center pl-3 pr-8 py-1.5 rounded-md text-xs font-semibold border focus:outline-none focus:ring-2 focus:ring-brand-orange/20 cursor-pointer appearance-none ${getReturnBadge(order.return_status)}`}
+                                                style="background-position: right 0.4rem center; background-size: 1rem 1rem;"
+                                            >
+                                                <option value="Pending" selected={order.return_status === 'Pending' || !order.return_status}>Pending</option>
+                                                <option value="Received" selected={order.return_status === 'Received'}>Received</option>
+                                            </select>
+                                        </form>
+                                    )}
+                                </td>
+                                <td class="p-4" data-col="summary">
+                                    <div class="text-[11px] text-gray-500 font-medium whitespace-pre-wrap leading-relaxed max-w-[150px]">
+                                        {order.items_summary}
+                                    </div>
+                                </td>
+                                <td class="p-4" data-col="notes">
+                                    <form method="POST" class="flex gap-2">
+                                        <input type="hidden" name="action" value="update_notes" />
+                                        <input type="hidden" name="order_id" value={order.id} />
+                                        <input 
+                                            type="text" 
+                                            name="tracking_notes" 
+                                            value={order.tracking_notes || ""} 
+                                            placeholder="Add notes..."
+                                            class="flex-1 w-full text-xs px-2.5 py-1.5 border border-transparent bg-gray-50 hover:border-gray-300 focus:bg-white focus:border-brand-orange focus:ring-1 focus:ring-brand-orange rounded transition-all"
+                                            onblur="if(this.value !== this.defaultValue) this.form.submit()"
+                                        />
+                                        <button type="submit" class="hidden">Save</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </div>
+        
+        {totalItems > 0 && (
+            <Pagination 
+                currentPage={page} 
+                totalPages={totalPages} 
+                totalItems={totalItems}
+                limit={limit} 
+            />
+        )}
+    </div>
+
+    <!-- Bulk Action Bar -->
+    <div id="bulkActionBar" class="fixed bottom-0 left-0 right-0 md:left-64 bg-white border-t border-gray-200 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.05)] p-4 flex items-center justify-between z-50 transform translate-y-full transition-transform duration-300">
+        <div class="flex items-center gap-4">
+            <span class="bg-brand-orange text-white font-bold px-3 py-1 rounded-full text-sm"><span id="selectedCount">0</span> Selected</span>
+            <span class="text-sm text-gray-500 font-medium hidden sm:inline">Bulk Actions:</span>
+        </div>
+        
+        <form method="POST" id="bulkForm" class="flex items-center gap-3">
+            <input type="hidden" name="action" id="bulkActionType" value="" />
+            <input type="hidden" name="order_ids" id="bulkOrderIds" value="" />
+            
+            {currentTab === 'payments' ? (
+                <>
+                    <select name="payment_status" class="text-sm border-gray-300 rounded-md focus:ring-brand-orange focus:border-brand-orange py-2 pl-3 pr-8 appearance-none" required style="background-position: right 0.4rem center; background-size: 1rem 1rem;">
+                        <option value="" disabled selected>Select Status...</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Invoiced">Invoiced</option>
+                        <option value="Receiving in Bank">Receiving in Bank</option>
+                        <option value="Sent to Vendor">Sent to Vendor</option>
+                    </select>
+                    <button type="button" onclick="submitBulk('bulk_update_payment')" class="bg-gray-900 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-black transition-colors">Apply</button>
+                </>
+            ) : (
+                <>
+                    <select name="return_status" class="text-sm border-gray-300 rounded-md focus:ring-brand-orange focus:border-brand-orange py-2 pl-3 pr-8 appearance-none" required style="background-position: right 0.4rem center; background-size: 1rem 1rem;">
+                        <option value="" disabled selected>Select Status...</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Received">Received</option>
+                    </select>
+                    <button type="button" onclick="submitBulk('bulk_update_return')" class="bg-gray-900 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-black transition-colors">Apply</button>
+                </>
+            )}
+        </form>
+    </div>
+
+    <script is:inline>
+        document.addEventListener('DOMContentLoaded', () => {
+            const selectAll = document.getElementById('selectAll');
+            const rowCheckboxes = document.querySelectorAll('.row-checkbox');
+            const bulkActionBar = document.getElementById('bulkActionBar');
+            const selectedCount = document.getElementById('selectedCount');
+            const bulkOrderIds = document.getElementById('bulkOrderIds');
+            const bulkActionType = document.getElementById('bulkActionType');
+            const bulkForm = document.getElementById('bulkForm');
+            const periodSelect = document.getElementById('period-select');
+            const customDateInputs = document.getElementById('custom-date-inputs');
+
+            if (periodSelect && customDateInputs) {
+                periodSelect.addEventListener('change', (e) => {
+                    if (e.target.value === 'custom') {
+                        customDateInputs.classList.remove('hidden');
+                        customDateInputs.classList.add('flex');
+                        customDateInputs.querySelectorAll('input').forEach(i => i.required = true);
+                    } else {
+                        customDateInputs.classList.add('hidden');
+                        customDateInputs.classList.remove('flex');
+                        customDateInputs.querySelectorAll('input').forEach(i => i.required = false);
+                        e.target.form.submit();
+                    }
+                });
+            }
+
+            function updateBulkActionUI() {
+                const selected = Array.from(rowCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+                if (selected.length > 0) {
+                    bulkActionBar.classList.remove('translate-y-full');
+                    bulkActionBar.classList.add('translate-y-0');
+                    selectedCount.textContent = selected.length;
+                    bulkOrderIds.value = selected.join(',');
+                } else {
+                    bulkActionBar.classList.add('translate-y-full');
+                    bulkActionBar.classList.remove('translate-y-0');
+                }
+                
+                if (selectAll && rowCheckboxes.length > 0) {
+                    selectAll.checked = selected.length === rowCheckboxes.length;
+                }
+            }
+
+            if (selectAll) {
+                selectAll.addEventListener('change', (e) => {
+                    rowCheckboxes.forEach(cb => cb.checked = e.target.checked);
+                    updateBulkActionUI();
+                });
+            }
+
+            rowCheckboxes.forEach(cb => {
+                cb.addEventListener('change', updateBulkActionUI);
+            });
+
+            window.submitBulk = function(actionType) {
+                bulkActionType.value = actionType;
+                const selectEl = bulkForm.querySelector('select');
+                if (!selectEl.value) {
+                    alert('Please select a status to apply.');
+                    return;
+                }
+                bulkForm.submit();
+            }
+        });
+    </script>
+</AdminLayout>

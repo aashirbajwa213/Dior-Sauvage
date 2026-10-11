@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /checkout
+Disallow: /order-success
+Disallow: /api/
+Disallow: /admin/
+
+Sitemap: https://gionee.com.pk/sitemap-index.xml

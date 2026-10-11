@@ -1,0 +1,398 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+
+const db = Astro.locals.runtime?.env?.DB;
+let errorMsg = "";
+
+// Date Filters
+const url = new URL(Astro.request.url);
+const period = url.searchParams.get("period") || "this_month";
+const customStart = url.searchParams.get("start") || "";
+const customEnd = url.searchParams.get("end") || "";
+
+let nowPktStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+let startDate = new Date(nowPktStr);
+let endDate = new Date(nowPktStr);
+
+if (period === "today") {
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "yesterday") {
+    startDate.setDate(startDate.getDate() - 1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "this_week") {
+    const day = startDate.getDay();
+    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+    startDate.setDate(diff);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "this_month") {
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "previous_month") {
+    startDate.setMonth(startDate.getMonth() - 1);
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + 1);
+    endDate.setDate(0);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "last_30_days") {
+    startDate.setDate(startDate.getDate() - 30);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "lifetime") {
+    startDate = new Date("2020-01-01");
+} else if (period === "custom" && customStart && customEnd) {
+    startDate = new Date(customStart + "T00:00:00");
+    endDate = new Date(customEnd + "T23:59:59");
+}
+
+const PKT_OFFSET = 5 * 60 * 60 * 1000;
+startDate.setTime(startDate.getTime() - PKT_OFFSET);
+endDate.setTime(endDate.getTime() - PKT_OFFSET);
+
+const startStr = startDate.toISOString();
+const endStr = endDate.toISOString();
+
+// KPIs
+let metrics = {
+    total: 0,
+    pending: 0,
+    confirmed: 0,
+    booked: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0,
+    returned: 0,
+    revenue: 0,
+    aov: 0
+};
+
+let dailyTrend = [];
+let topProducts = [];
+let topCities = [];
+
+try {
+    if (db) {
+        // 1. Status metrics & AOV
+        const { results: orders } = await db.prepare(`
+            SELECT status, total_amount FROM orders
+            WHERE DATETIME(created_at) >= DATETIME(?) AND DATETIME(created_at) <= DATETIME(?)
+        `).bind(startStr, endStr).all();
+
+        if (orders) {
+            metrics.total = orders.length;
+            let totalRevenue = 0;
+            let validOrders = 0;
+
+            orders.forEach((o: any) => {
+                const s = (o.status || "").toLowerCase();
+                if (s === "pending") metrics.pending++;
+                else if (s === "confirmed") metrics.confirmed++;
+                else if (s === "booked") metrics.booked++;
+                else if (s === "shipped") metrics.shipped++;
+                else if (s === "delivered") metrics.delivered++;
+                else if (s === "cancelled") metrics.cancelled++;
+                else if (s === "returned" || s === "delivery failed") metrics.returned++;
+
+                if (o.status !== "Cancelled" && o.status !== "Returned" && o.status !== "Delivery Failed") {
+                    totalRevenue += parseFloat(o.total_amount || 0);
+                    validOrders++;
+                }
+            });
+            metrics.revenue = totalRevenue;
+            metrics.aov = validOrders > 0 ? totalRevenue / validOrders : 0;
+        }
+
+        // 2. Daily Sales Trend
+        const { results: trend } = await db.prepare(`
+            SELECT date(created_at) as day, COUNT(*) as count, SUM(total_amount) as revenue
+            FROM orders
+            WHERE DATETIME(created_at) >= DATETIME(?) AND DATETIME(created_at) <= DATETIME(?) AND status NOT IN ('Cancelled', 'Returned', 'Delivery Failed')
+            GROUP BY day
+            ORDER BY day ASC
+        `).bind(startStr, endStr).all();
+        dailyTrend = trend || [];
+
+        // 3. Top Products
+        const { results: products } = await db.prepare(`
+            SELECT p.title as name, SUM(oi.quantity) as sold
+            FROM order_items oi
+            JOIN orders o ON oi.order_id = o.id
+            JOIN products p ON oi.product_id = p.id
+            WHERE DATETIME(o.created_at) >= DATETIME(?) AND DATETIME(o.created_at) <= DATETIME(?) AND o.status NOT IN ('Cancelled', 'Returned', 'Delivery Failed')
+            GROUP BY p.title
+            ORDER BY sold DESC
+            LIMIT 5
+        `).bind(startStr, endStr).all();
+        topProducts = products || [];
+
+        // 4. Top Cities
+        const { results: cities } = await db.prepare(`
+            SELECT city, COUNT(*) as count
+            FROM orders
+            WHERE DATETIME(created_at) >= DATETIME(?) AND DATETIME(created_at) <= DATETIME(?) AND status NOT IN ('Cancelled', 'Returned', 'Delivery Failed')
+            GROUP BY LOWER(TRIM(city))
+            ORDER BY count DESC
+            LIMIT 5
+        `).bind(startStr, endStr).all();
+        topCities = cities || [];
+    }
+} catch (e: any) {
+    errorMsg = "Failed to load dashboard data: " + e.message;
+}
+
+// Data mapping for charts
+const dates = dailyTrend.map((t: any) => t.day);
+const revenues = dailyTrend.map((t: any) => t.revenue);
+const counts = dailyTrend.map((t: any) => t.count);
+
+const prodLabels = topProducts.map((p: any) => p.name);
+const prodSeries = topProducts.map((p: any) => p.sold);
+
+const cityLabels = topCities.map((c: any) => {
+    // Capitalize city beautifully
+    if(!c.city) return "Unknown";
+    return c.city.split(' ').map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+});
+const citySeries = topCities.map((c: any) => c.count);
+---
+
+<AdminLayout title="Dashboard - Gionee Pakistan" activePage="dashboard">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800 tracking-tight">Dashboard</h1>
+            <p class="text-sm text-gray-500 mt-1">Overview of your business potential and operations.</p>
+        </div>
+        
+        <!-- Filters -->
+        <form class="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-2 border border-gray-200 rounded-lg shadow-sm w-full md:w-auto" method="GET">
+            <select name="period" id="period-select" class="text-sm border-none bg-transparent focus:ring-0 text-gray-700 font-medium cursor-pointer py-1 pl-2 pr-8 w-full sm:w-auto">
+                <option value="today" selected={period === 'today'}>Today</option>
+                <option value="yesterday" selected={period === 'yesterday'}>Yesterday</option>
+                <option value="this_week" selected={period === 'this_week'}>This Week</option>
+                <option value="this_month" selected={period === 'this_month'}>This Month</option>
+                <option value="previous_month" selected={period === 'previous_month'}>Previous Month</option>
+                <option value="last_30_days" selected={period === 'last_30_days'}>Last 30 Days</option>
+                <option value="lifetime" selected={period === 'lifetime'}>Lifetime</option>
+                <option value="custom" selected={period === 'custom'}>Custom Range...</option>
+            </select>
+            
+            <div id="custom-date-inputs" class={`flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:border-l border-gray-200 sm:pl-3 w-full sm:w-auto ${period === 'custom' ? 'flex' : 'hidden'}`}>
+                <input type="date" name="start" value={customStart} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-full sm:w-auto" required={period === 'custom'} />
+                <span class="text-gray-400 text-sm hidden sm:inline">to</span>
+                <input type="date" name="end" value={customEnd} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-full sm:w-auto" required={period === 'custom'} />
+                <button type="submit" class="bg-brand-orange text-white px-3 py-1.5 rounded-md text-sm font-bold shadow-sm hover:bg-brand-orange/90 transition-colors w-full sm:w-auto mt-1 sm:mt-0">Apply</button>
+            </div>
+        </form>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 text-red-800 p-4 rounded-lg mb-8 text-sm font-medium border border-red-200">{errorMsg}</div>
+    )}
+
+    <!-- Status Overview -->
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-8">
+        <!-- Total Orders -->
+        <div class="bg-gray-800 text-white p-4 rounded-xl shadow-sm col-span-2 lg:col-span-1 border border-gray-700 flex flex-col justify-center relative overflow-hidden">
+            <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 z-10">Total</p>
+            <h2 class="text-3xl font-extrabold z-10">{metrics.total}</h2>
+            <Icon name="package" class="w-16 h-16 absolute -bottom-2 -right-2 text-white opacity-10 pointer-events-none" />
+        </div>
+        <!-- Pending -->
+        <div class="bg-amber-50 p-4 rounded-xl border border-amber-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1 z-10">Pending</p>
+            <h2 class="text-2xl font-bold text-amber-900 z-10">{metrics.pending}</h2>
+            <Icon name="clock" class="w-14 h-14 absolute -bottom-2 -right-2 text-amber-600 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Confirmed -->
+        <div class="bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1 z-10">Confirmed</p>
+            <h2 class="text-2xl font-bold text-blue-900 z-10">{metrics.confirmed}</h2>
+            <Icon name="check" class="w-14 h-14 absolute -bottom-2 -right-2 text-blue-600 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Booked -->
+        <div class="bg-purple-50 p-4 rounded-xl border border-purple-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-purple-600 uppercase tracking-wider mb-1 z-10">Booked</p>
+            <h2 class="text-2xl font-bold text-purple-900 z-10">{metrics.booked}</h2>
+            <Icon name="calendar" class="w-14 h-14 absolute -bottom-2 -right-2 text-purple-600 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Shipped -->
+        <div class="bg-indigo-50 p-4 rounded-xl border border-indigo-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-1 z-10">Shipped</p>
+            <h2 class="text-2xl font-bold text-indigo-900 z-10">{metrics.shipped}</h2>
+            <Icon name="truck" class="w-14 h-14 absolute -bottom-2 -right-2 text-indigo-600 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Delivered -->
+        <div class="bg-emerald-50 p-4 rounded-xl border border-emerald-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-1 z-10">Delivered</p>
+            <h2 class="text-2xl font-bold text-emerald-900 z-10">{metrics.delivered}</h2>
+            <Icon name="badge-check" class="w-14 h-14 absolute -bottom-2 -right-2 text-emerald-600 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Cancelled -->
+        <div class="bg-gray-50 p-4 rounded-xl border border-gray-300 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 z-10">Cancelled</p>
+            <h2 class="text-2xl font-bold text-gray-800 z-10">{metrics.cancelled}</h2>
+            <Icon name="x" class="w-14 h-14 absolute -bottom-2 -right-2 text-gray-500 opacity-10 pointer-events-none" />
+        </div>
+        <!-- Returned -->
+        <div class="bg-rose-50 p-4 rounded-xl border border-rose-200 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p class="text-[10px] font-bold text-rose-600 uppercase tracking-wider mb-1 z-10">Returned</p>
+            <h2 class="text-2xl font-bold text-rose-900 z-10">{metrics.returned}</h2>
+            <Icon name="arrow-uturn-left" class="w-14 h-14 absolute -bottom-2 -right-2 text-rose-600 opacity-10 pointer-events-none" />
+        </div>
+    </div>
+
+    <!-- Charts Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        <!-- Main Trend Chart -->
+        <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Daily Sales Trend</h3>
+            <p class="text-xs text-gray-500 mb-6 font-medium">Valid orders (excluding cancelled/returned)</p>
+            <div id="trendChart" class="w-full h-[300px]"></div>
+        </div>
+
+        <!-- Top Products Chart -->
+        <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Top Selling Products</h3>
+            <p class="text-xs text-gray-500 mb-6 font-medium">Most ordered items by unit count</p>
+            <div id="productsChart" class="w-full flex-1 min-h-[250px] flex items-center justify-center"></div>
+        </div>
+    </div>
+
+    <!-- Additional Widgets -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+        <!-- Average Order Value (AOV) -->
+        <div class="bg-gradient-to-br from-brand-orange to-orange-500 p-6 rounded-2xl shadow-md text-white relative overflow-hidden flex flex-col justify-between">
+            <div class="absolute right-0 top-0 opacity-10 transform translate-x-1/4 -translate-y-1/4">
+                <svg class="w-32 h-32" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            </div>
+            <div>
+                <h3 class="text-sm font-bold text-orange-100 uppercase tracking-wider mb-2">Average Order Value</h3>
+                <h2 class="text-4xl font-extrabold tracking-tight mb-2">PKR {Math.round(metrics.aov).toLocaleString()}</h2>
+                <p class="text-orange-50 text-sm font-medium">Estimated Revenue: PKR {Math.round(metrics.revenue).toLocaleString()}</p>
+            </div>
+            <div class="mt-8 text-xs font-semibold bg-white/20 inline-block px-3 py-1.5 rounded-lg w-max">
+                Valid orders only
+            </div>
+        </div>
+
+        <!-- Top Cities -->
+        <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm">
+            <h3 class="text-lg font-bold text-gray-900 mb-1">Top Cities</h3>
+            <p class="text-xs text-gray-500 mb-6 font-medium">Highest volume locations</p>
+            <div id="citiesChart" class="w-full h-[180px]"></div>
+        </div>
+    </div>
+
+    <!-- Chart Library and Initialization -->
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <script is:inline define:vars={{ dates, revenues, counts, prodLabels, prodSeries, cityLabels, citySeries }}>
+        // Custom Range Filter Logic
+        const select = document.getElementById('period-select');
+        const customInputs = document.getElementById('custom-date-inputs');
+        const dateFields = customInputs.querySelectorAll('input[type="date"]');
+        
+        select.addEventListener('change', function() {
+            if (this.value === 'custom') {
+                customInputs.classList.remove('hidden');
+                customInputs.classList.add('flex');
+                dateFields.forEach(f => f.required = true);
+            } else {
+                customInputs.classList.add('hidden');
+                customInputs.classList.remove('flex');
+                dateFields.forEach(f => f.required = false);
+                this.form.submit();
+            }
+        });
+
+        // Initialize Charts
+        document.addEventListener('DOMContentLoaded', function () {
+            // 1. Trend Chart (Area)
+            if (document.getElementById('trendChart') && dates.length > 0) {
+                new ApexCharts(document.getElementById('trendChart'), {
+                    series: [{
+                        name: 'Revenue (PKR)',
+                        type: 'area',
+                        data: revenues
+                    }, {
+                        name: 'Orders',
+                        type: 'line',
+                        data: counts
+                    }],
+                    chart: {
+                        height: 300,
+                        type: 'line',
+                        fontFamily: 'Inter, sans-serif',
+                        toolbar: { show: false },
+                        zoom: { enabled: false }
+                    },
+                    colors: ['#db4100', '#1f2937'],
+                    stroke: { curve: 'smooth', width: [2, 3] },
+                    fill: {
+                        type: ['gradient', 'solid'],
+                        gradient: {
+                            shadeIntensity: 1,
+                            opacityFrom: 0.2,
+                            opacityTo: 0.05,
+                            stops: [0, 100]
+                        }
+                    },
+                    dataLabels: { enabled: false },
+                    labels: dates,
+                    xaxis: { type: 'datetime' },
+                    yaxis: [
+                        { title: { text: 'Revenue' }, labels: { formatter: (val) => "PKR " + val.toLocaleString() }, min: 0 },
+                        { opposite: true, title: { text: 'Orders' }, labels: { formatter: (val) => val.toFixed(0) }, min: 0 }
+                    ],
+                    legend: { position: 'top', horizontalAlign: 'right' }
+                }).render();
+            } else if (document.getElementById('trendChart')) {
+                document.getElementById('trendChart').innerHTML = '<div class="h-full flex items-center justify-center text-gray-400 font-medium text-sm">No data for selected period</div>';
+            }
+
+            // 2. Top Products (Donut/Pie)
+            if (document.getElementById('productsChart') && prodSeries.length > 0) {
+                new ApexCharts(document.getElementById('productsChart'), {
+                    series: prodSeries,
+                    labels: prodLabels,
+                    chart: { type: 'donut', height: 280, fontFamily: 'Inter, sans-serif' },
+                    colors: ['#db4100', '#f97316', '#fb923c', '#fdba74', '#fed7aa'],
+                    plotOptions: {
+                        pie: { donut: { size: '65%' } }
+                    },
+                    dataLabels: { enabled: false },
+                    legend: { position: 'bottom' },
+                    tooltip: {
+                        y: { formatter: (val) => val + " Units" }
+                    }
+                }).render();
+            } else if (document.getElementById('productsChart')) {
+                document.getElementById('productsChart').innerHTML = '<div class="h-full flex items-center justify-center text-gray-400 font-medium text-sm">No data for selected period</div>';
+            }
+
+            // 3. Top Cities (Horizontal Bar)
+            if (document.getElementById('citiesChart') && citySeries.length > 0) {
+                new ApexCharts(document.getElementById('citiesChart'), {
+                    series: [{ name: 'Orders', data: citySeries }],
+                    chart: { type: 'bar', height: 180, fontFamily: 'Inter, sans-serif', toolbar: { show: false } },
+                    plotOptions: {
+                        bar: {
+                            horizontal: true,
+                            borderRadius: 4,
+                            colors: { backgroundBarColors: ['#f3f4f6'], backgroundBarRadius: 4 }
+                        }
+                    },
+                    colors: ['#3b82f6'],
+                    dataLabels: { enabled: true, style: { colors: ['#fff'] } },
+                    xaxis: { categories: cityLabels, labels: { show: false }, axisBorder: { show: false }, axisTicks: { show: false } },
+                    yaxis: { labels: { style: { fontWeight: 600 } } },
+                    grid: { show: false }
+                }).render();
+            } else if (document.getElementById('citiesChart')) {
+                document.getElementById('citiesChart').innerHTML = '<div class="h-full flex items-center justify-center text-gray-400 font-medium text-sm">No data for selected period</div>';
+            }
+        });
+    </script>
+</AdminLayout>

@@ -1,0 +1,315 @@
+---
+import Price from "./ui/Price.astro";
+import Rating from "./ui/Rating.astro";
+import Badge from "./ui/Badge.astro";
+import Button from "./ui/Button.astro";
+import { Image } from "astro:assets";
+
+interface Props {
+    id?: number;
+    title: string;
+    price: number;
+    originalPrice?: number;
+    rating: number;
+    reviewCount: number;
+    image: string;
+    href: string;
+    badge?: string;
+    isNew?: boolean;
+    packs?: {
+        id: number;
+        product_id: number;
+        pack_label: string;
+        unit_count: number;
+        pack_price: number;
+        free_shipping: number;
+    }[];
+}
+
+const { id, title, price, originalPrice, rating, reviewCount, image, href, badge, packs = [] } =
+    Astro.props;
+
+const computedPacks = packs.length > 0 ? packs : [
+    { id: -1, pack_label: "Single Pack", unit_count: 1, pack_price: price, free_shipping: 1 },
+    { id: -2, pack_label: "Duo Pack", unit_count: 2, pack_price: 8499, free_shipping: 1 },
+    { id: -3, pack_label: "Trio Pack", unit_count: 3, pack_price: 11999, free_shipping: 1 },
+];
+
+// Dynamically resolve image for optimization
+const images = import.meta.glob<{ default: ImageMetadata }>(
+    "../assets/*.{jpeg,jpg,png,gif}",
+    { eager: true },
+);
+const imageName = image.split("/").pop();
+const imagePath = `../assets/${imageName}`;
+const imageMeta = images[imagePath]?.default;
+---
+
+<div
+    class="group block bg-white rounded-xl border border-gray-100 hover:border-gray-200 shadow-sm hover:shadow-md transition-all duration-300"
+>
+    <a
+        href={href}
+        class="block relative aspect-square overflow-hidden rounded-t-xl bg-gray-50"
+    >
+        {
+            imageMeta ? (
+                <Image
+                    src={imageMeta}
+                    alt={title}
+                    class="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
+                    widths={[300, 500, imageMeta.width]}
+                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                />
+            ) : (
+                <Image
+                    src={image}
+                    width={662}
+                    height={662}
+                    alt={title}
+                    class="object-cover w-full h-full group-hover:scale-105 transition-transform duration-500"
+                    loading="lazy"
+                    widths={[300, 500, 662]}
+                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                />
+            )
+        }
+
+        {
+            badge && (
+                <div class="absolute top-3 left-3">
+                    <Badge variant="sale">{badge}</Badge>
+                </div>
+            )
+        }
+    </a>
+
+    <div class="p-4">
+        <div class="mb-2">
+            <Rating rating={rating} count={reviewCount} />
+        </div>
+
+        <a href={href} class="block">
+            <h3
+                class="font-semibold text-gray-900 mb-2 line-clamp-2 hover:text-[#02274F] transition-colors"
+            >
+                {title}
+            </h3>
+        </a>
+
+        <div class="flex items-center justify-between mt-auto relative">
+            <Price price={price} originalPrice={originalPrice} />
+
+            <div class="relative z-20">
+                <button
+                    class="add-to-cart-trigger rounded-lg !bg-[#02274F] text-white px-4 py-2 text-sm font-semibold shadow-sm hover:shadow-md hover:scale-105 transition-all flex items-center gap-1 hover:!bg-[#011d3b]"
+                    style="background-color: #02274F !important;"
+                    data-id={title.toLowerCase().replace(/\s+/g, "-")}
+                    data-name={title}
+                    data-price={price}
+                    data-image={image}
+                    data-slug={href}
+                    data-product-id={id}
+                >
+                    Order Now
+                </button>
+
+                <!-- Quick Pack Selector (Hidden by default) -->
+                <div
+                    class="pack-selector hidden absolute bottom-full right-0 mb-3 w-[270px] sm:w-[280px] bg-white rounded-2xl shadow-2xl border border-gray-100 p-3.5 transform origin-bottom-right transition-all animate-in fade-in zoom-in-95 duration-200 z-50"
+                >
+                    <div
+                        class="text-[11px] font-bold text-gray-400 mb-2.5 uppercase tracking-wider"
+                    >
+                        SELECT QUANTITY
+                    </div>
+
+                    <div class="space-y-2 mb-3">
+                        {
+                            computedPacks.map((pack, idx) => (
+                                <button
+                                    type="button"
+                                    class={`quick-add-option w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-left transition-all cursor-pointer relative ${
+                                        idx === 0 
+                                            ? "border-[#02274F] border-2 bg-blue-50/20" 
+                                            : "border-gray-200/80 hover:border-gray-300 bg-white"
+                                    }`}
+                                    data-pack-id={pack.id}
+                                    data-qty={pack.unit_count}
+                                    data-label={pack.pack_label}
+                                    data-price={pack.pack_price}
+                                >
+                                    <span class="font-semibold text-gray-900 text-sm">
+                                        {pack.pack_label}
+                                    </span>
+                                    <div class="flex flex-col items-end shrink-0 pl-2">
+                                        <span class="font-bold text-[#02274F] text-sm leading-none">
+                                            Rs {pack.pack_price.toLocaleString()}
+                                        </span>
+                                        {pack.free_shipping === 1 && (
+                                            <span class="font-bold text-emerald-800 text-[9px] bg-emerald-100 px-1.5 py-0.5 rounded tracking-wide uppercase mt-1">
+                                                FREE SHIPPING
+                                            </span>
+                                        )}
+                                    </div>
+                                </button>
+                            ))
+                        }
+                    </div>
+
+                    <button
+                        type="button"
+                        class="confirm-add-btn w-full !bg-[#02274F] hover:!bg-[#011d3b] text-white font-bold py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all text-sm"
+                        style="background-color: #02274F !important;"
+                    >
+                        Add to Cart
+                    </button>
+
+                    <div
+                        class="absolute -bottom-2 right-5 w-4 h-4 bg-white transform rotate-45 border-b border-r border-gray-100"
+                    >
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    import { addToCart } from "../stores/cart";
+
+    function initProductCard() {
+        const actionContainers = document.querySelectorAll(".relative.z-20");
+
+        if (actionContainers.length === 0) return;
+
+        actionContainers.forEach((container) => {
+            const trigger = container.querySelector(".add-to-cart-trigger");
+            const selector = container.querySelector(".pack-selector");
+            const options = container.querySelectorAll(".quick-add-option");
+            const confirmBtn = container.querySelector(".confirm-add-btn");
+
+            if (!trigger || !selector || !confirmBtn) return;
+
+            const firstOpt = options[0] as HTMLElement;
+            let selectedQty = firstOpt ? Number(firstOpt.dataset.qty) : 1;
+            let selectedPackId = firstOpt ? Number(firstOpt.dataset.packId) : -1;
+            let selectedPackLabel = firstOpt ? firstOpt.dataset.label || "Single" : "Single";
+            let selectedPackPrice = firstOpt ? Number(firstOpt.dataset.price) : Number((trigger as HTMLElement).dataset.price || 0);
+
+            // Toggle visibility
+            trigger.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Hide all others
+                document.querySelectorAll(".pack-selector").forEach((el) => {
+                    if (el !== selector && !el.classList.contains("hidden")) {
+                        el.classList.add("hidden");
+                    }
+                });
+
+                selector.classList.toggle("hidden");
+            });
+
+            // Option selection logic
+            options.forEach((opt) => {
+                opt.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // Update UI state
+                    options.forEach((o) => {
+                        o.classList.remove(
+                            "border-[#02274F]",
+                            "border-2",
+                            "bg-blue-50/20"
+                        );
+                        o.classList.add("border-gray-200/80", "bg-white");
+                    });
+
+                    // Active state for clicked
+                    opt.classList.remove("border-gray-200/80", "bg-white");
+                    opt.classList.add(
+                        "border-[#02274F]",
+                        "border-2",
+                        "bg-blue-50/20"
+                    );
+
+                    selectedQty = Number((opt as HTMLElement).dataset.qty);
+                    selectedPackId = Number((opt as HTMLElement).dataset.packId);
+                    selectedPackLabel = (opt as HTMLElement).dataset.label!;
+                    selectedPackPrice = Number((opt as HTMLElement).dataset.price);
+                });
+            });
+
+            // Confirm Add to Cart
+            confirmBtn.addEventListener("click", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const btn = trigger as HTMLElement;
+
+                if (!btn.dataset.id || !btn.dataset.price) return;
+
+                const productId = btn.dataset.productId ? Number(btn.dataset.productId) : undefined;
+                const isPack = selectedQty > 1;
+
+                const item = {
+                    id: btn.dataset.id + (isPack ? `-pack-${selectedQty}` : ""),
+                    name: btn.dataset.name + (isPack ? ` - ${selectedPackLabel}` : ""),
+                    price: selectedPackPrice,
+                    image: btn.dataset.image!,
+                    slug: btn.dataset.slug!,
+                    quantity: 1,
+                    packSize: selectedQty,
+                    productId: productId,
+                    packId: selectedPackId,
+                };
+
+                addToCart(item);
+                selector.classList.add("hidden");
+
+                // Reset selection to first option for next time (good UX)
+                const defaultOpt = options[0] as HTMLElement;
+                if (defaultOpt) {
+                    selectedQty = Number(defaultOpt.dataset.qty);
+                    selectedPackId = Number(defaultOpt.dataset.packId);
+                    selectedPackLabel = defaultOpt.dataset.label || "Single Pack";
+                    selectedPackPrice = Number(defaultOpt.dataset.price);
+
+                    options.forEach((o) => {
+                        o.classList.remove(
+                            "border-[#02274F]",
+                            "border-2",
+                            "bg-blue-50/20"
+                        );
+                        o.classList.add("border-gray-200/80", "bg-white");
+                    });
+
+                    defaultOpt.classList.remove("border-gray-200/80", "bg-white");
+                    defaultOpt.classList.add(
+                        "border-[#02274F]",
+                        "border-2",
+                        "bg-blue-50/20"
+                    );
+                }
+            });
+        });
+
+        // Global click listener to close popups
+        document.addEventListener("click", (e) => {
+            const target = e.target as HTMLElement;
+            if (!target.closest(".relative.z-20")) {
+                document
+                    .querySelectorAll(".pack-selector:not(.hidden)")
+                    .forEach((el) => {
+                        el.classList.add("hidden");
+                    });
+            }
+        });
+    }
+
+    initProductCard();
+    document.addEventListener("astro:page-load", initProductCard);
+</script>

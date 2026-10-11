@@ -1,0 +1,49 @@
+# build output
+dist/
+
+# generated types
+.astro/
+
+# dependencies
+node_modules/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment variables
+.env
+.env.production
+
+# macOS-specific files
+.DS_Store
+
+# jetbrains setting folder
+.idea/
+
+# wrangler/cloudflare local storage
+.wrangler/
+
+# local environment / sensitive files
+VPS/
+.env*
+
+# backup files
+*.backup.astro
+gionee-frontend/
+
+# large docs
+*.pdf
+
+# private token directories
+*Token*/
+Media/
+
+# database dumps & logs
+*.sql
+*.csv
+legacy_orders.json
+deleted_dummies.json
+test_emails.json

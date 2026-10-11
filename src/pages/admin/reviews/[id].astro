@@ -1,0 +1,318 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+
+const { id } = Astro.params;
+
+const db = Astro.locals.runtime?.env?.DB;
+const url = new URL(Astro.request.url);
+
+let review: any = null;
+let products: any[] = [];
+let errorMsg = "";
+let successMsg = "";
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml or start development using Astro proxy.";
+} else {
+    try {
+        // 1. Fetch active products to populate the dropdown select list
+        const productsResult = await db.prepare("SELECT id, title FROM products ORDER BY title ASC").all();
+        products = productsResult.results || [];
+
+        // 2. Process Form POST Request
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const actionType = formData.get("action_type")?.toString();
+
+            // Handle Review Deletion
+            if (actionType === "delete" && id !== "new") {
+                await db.prepare("DELETE FROM reviews WHERE id = ?").bind(id).run();
+                return Astro.redirect("/admin/reviews/?message=deleted");
+            }
+
+            // Otherwise, process SAVE / UPDATE
+            const product_id = parseInt(formData.get("product_id")?.toString() || "0");
+            const rating = parseFloat(formData.get("rating")?.toString() || "5");
+            const author = formData.get("author")?.toString().trim() || "";
+            const location = formData.get("location")?.toString().trim() || null;
+            const title = formData.get("title")?.toString().trim() || null;
+            const text = formData.get("text")?.toString().trim() || "";
+            // is_visible is managed from the product page
+            
+            // Format dynamic date entry
+            const dateVal = formData.get("created_at")?.toString().trim();
+            const created_at = dateVal ? dateVal.replace("T", " ") : new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+            // Validation checks
+            if (!product_id || product_id <= 0) {
+                throw new Error("Please select a target product linked from the catalog.");
+            }
+            if (rating < 1 || rating > 5) {
+                throw new Error("Rating score must fall within the range 1.0 to 5.0 stars.");
+            }
+            if (!author) {
+                throw new Error("Reviewer name / author field is required.");
+            }
+            if (!text) {
+                throw new Error("Review testimonial content body is required.");
+            }
+
+            let targetId = id;
+
+            if (id === "new") {
+                // Insert new review
+                await db.prepare(`
+                    INSERT INTO reviews (product_id, rating, title, text, author, location, is_visible, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                `).bind(product_id, rating, title, text, author, location, created_at).run();
+
+                // Retrieve ID of the newly created review row
+                const newRow: any = await db.prepare("SELECT id FROM reviews WHERE product_id = ? AND author = ? ORDER BY id DESC LIMIT 1").bind(product_id, author).first();
+                if (!newRow) throw new Error("Failed to insert the review.");
+                targetId = newRow.id.toString();
+
+                return Astro.redirect(`/admin/reviews/${targetId}/?message=created`);
+            } else {
+                // Update review row
+                await db.prepare(`
+                    UPDATE reviews 
+                    SET product_id = ?, rating = ?, title = ?, text = ?, author = ?, location = ?, created_at = ?
+                    WHERE id = ?
+                `).bind(product_id, rating, title, text, author, location, created_at, id).run();
+                
+                successMsg = "Customer review successfully updated in D1 database!";
+            }
+        }
+
+        // 3. Fetch current review details for edit mode
+        if (id !== "new") {
+            const reviewRow = await db.prepare("SELECT * FROM reviews WHERE id = ?").bind(id).first();
+            if (reviewRow) {
+                review = reviewRow;
+            } else {
+                errorMsg = `Review with ID "${id}" was not found in the database catalog.`;
+            }
+        } else {
+            // Seed a clean visual template for new creation
+            review = {
+                id: "new",
+                product_id: products.length > 0 ? products[0].id : "",
+                rating: 5,
+                title: "",
+                text: "",
+                author: "",
+                location: "",
+                is_visible: 1,
+                created_at: new Date().toISOString().slice(0, 16) // datetime-local input format
+            };
+        }
+
+    } catch (e: any) {
+        errorMsg = e.message || "An unexpected error occurred while saving the review.";
+    }
+}
+
+// Read URL redirect query messages
+const redirectMsg = url.searchParams.get("message");
+if (redirectMsg === "created" && !successMsg) {
+    successMsg = "Review successfully created in D1 database! You can now refine its settings or make modifications below.";
+}
+
+// Convert sqlite space date layout into standard HTML datetime-local format
+let formattedDate = "";
+if (review && review.created_at) {
+    formattedDate = review.created_at.replace(" ", "T").substring(0, 16);
+}
+
+const seoTitle = id === "new" ? "Create Review - Admin Portal" : `Edit Review #${review?.id} - Admin Portal`;
+---
+
+<AdminLayout title={seoTitle} activePage="reviews">
+            <!-- Back Link -->
+            <a href="/admin/reviews/" class="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-brand-orange mb-6 font-semibold transition-colors">
+                ← Back to Customer Reviews Catalog
+            </a>
+
+            <!-- Error Banner -->
+            {errorMsg && (
+                <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+                    <div class="bg-red-100 text-red-800 p-1 rounded-full shrink-0 font-semibold">⚠️</div>
+                    <div>
+                        <p class="font-medium">Error Occurred</p>
+                        <p class="text-sm mt-0.5">{errorMsg}</p>
+                    </div>
+                </div>
+            )}
+
+            <!-- Success Banner -->
+            {successMsg && (
+                <div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+                    <div class="bg-green-100 text-green-800 p-1 rounded-full shrink-0 font-semibold">✓</div>
+                    <div>
+                        <p class="font-medium">Success</p>
+                        <p class="text-sm mt-0.5">{successMsg}</p>
+                    </div>
+                </div>
+            )}
+
+            {review && (
+                <div class="space-y-8">
+                    <!-- Title Bar -->
+                    <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                            <div class="flex items-center gap-3">
+                                <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">
+                                    {id === "new" ? "Create New Review" : `Manage Review #${review.id}`}
+                                </h1>
+                                {id !== "new" && (
+                                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
+                                        Rating Score: {review.rating} ★
+                                    </span>
+                                )}
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Configure testimonial feedback, star level, author attribution, and catalog connections.</p>
+                        </div>
+                        {id !== "new" && (
+                            <form method="POST" onsubmit="return confirm('Are you absolutely sure you want to permanently delete this customer review? This cannot be undone.');">
+                                <input type="hidden" name="action_type" value="delete" />
+                                <button type="submit" class="px-5 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 font-medium rounded-md text-sm transition-colors border border-red-100 shadow-sm">
+                                    Delete Review
+                                </button>
+                            </form>
+                        )}
+                    </div>
+
+                    <!-- Editor Split Panel -->
+                    <form method="POST" class="grid md:grid-cols-3 gap-8 items-start">
+                        <div class="md:col-span-2 space-y-6">
+                            <!-- Main Testimonial Fields Card -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-5">
+                                <h3 class="text-lg font-medium text-gray-900 border-b border-gray-100 pb-3">
+                                    Review Text & Feedback Content
+                                </h3>
+
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Review Title (Optional)</label>
+                                    <input
+                                        type="text"
+                                        name="title"
+                                        value={review.title || ""}
+                                        placeholder="e.g. Best Earphones under 500!, Highly Recommended, Awesome Sound"
+                                        class="w-full px-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Review Testimonial Text (Required)</label>
+                                    <textarea
+                                        name="text"
+                                        rows="6"
+                                        placeholder="Provide detailed customer experience feedback..."
+                                        class="w-full px-4 py-3 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                                        required
+                                    >{review.text}</textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sidebar Columns -->
+                        <div class="space-y-6">
+                            <!-- Meta Attributes Card -->
+                            <div class="bg-white p-6 rounded-lg border border-gray-100 shadow-sm space-y-5">
+                                <h3 class="text-base font-medium text-gray-900 border-b border-gray-100 pb-3">
+                                    Attributes & Metadata
+                                </h3>
+
+                                <!-- Target Product Selector -->
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Target Product (Required)</label>
+                                    {products.length === 0 ? (
+                                        <div class="text-xs font-medium text-red-500 bg-red-50 p-3 rounded-md">
+                                            No products found in database catalog. Please create a product first.
+                                        </div>
+                                    ) : (
+                                        <select
+                                            name="product_id"
+                                            class="w-full pl-3 pr-10 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                                            required
+                                        >
+                                            {products.map((p) => (
+                                                <option value={p.id} selected={p.id === review.product_id}>
+                                                    {p.title}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
+
+                                <!-- Rating Stars Selector -->
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Star Rating (1 - 5)</label>
+                                    <select
+                                        name="rating"
+                                        class="w-full pl-3 pr-10 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                                        required
+                                    >
+                                        <option value="5" selected={Math.round(review.rating) === 5}>5 Stars (Excellent)</option>
+                                        <option value="4" selected={Math.round(review.rating) === 4}>4 Stars (Good)</option>
+                                        <option value="3" selected={Math.round(review.rating) === 3}>3 Stars (Average)</option>
+                                        <option value="2" selected={Math.round(review.rating) === 2}>2 Stars (Poor)</option>
+                                        <option value="1" selected={Math.round(review.rating) === 1}>1 Star (Terrible)</option>
+                                    </select>
+                                </div>
+
+                                <!-- Reviewer Author Name -->
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Reviewer Name (Required)</label>
+                                    <input
+                                        type="text"
+                                        name="author"
+                                        value={review.author}
+                                        placeholder="e.g. Muhammad Ahmed, Ayesha Khan"
+                                        class="w-full px-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                                        required
+                                    />
+                                </div>
+
+                                <!-- Reviewer Location -->
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Reviewer Location (Optional)</label>
+                                    <input
+                                        type="text"
+                                        name="location"
+                                        value={review.location || ""}
+                                        placeholder="e.g. Lahore, Karachi, Rawalpindi"
+                                        class="w-full px-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                                    />
+                                </div>
+
+                                <!-- Date Entry Picker -->
+                                <div>
+                                    <label class="text-xs font-medium text-gray-500 uppercase tracking-wider block mb-2">Creation Date / Time</label>
+                                    <input
+                                        type="datetime-local"
+                                        name="created_at"
+                                        value={formattedDate}
+                                        class="w-full px-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-gray-800 bg-white"
+                                    />
+                                    <span class="text-[10px] text-gray-400 mt-1 block">Leave empty to auto-assign current timestamp.</span>
+                                </div>
+
+
+                            </div>
+
+                            <!-- Save Controls Panel -->
+                            <div class="bg-white p-5 rounded-lg border border-gray-100 shadow-sm space-y-3">
+                                <button type="submit" class="w-full py-3 bg-brand-orange hover:bg-brand-orange/95 text-white font-medium rounded-md text-sm transition-all shadow-sm active:scale-[0.98]">
+                                    {id === "new" ? "Create Customer Review" : "Save Review Settings"}
+                                </button>
+                                <a href="/admin/reviews/" class="w-full py-3 bg-gray-50 hover:bg-gray-100 text-gray-700 font-medium rounded-md text-sm transition-colors border border-gray-200 block text-center">
+                                    Discard Changes
+                                </a>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            )}
+</AdminLayout>

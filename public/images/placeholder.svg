@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
+  <rect width="100%" height="100%" fill="#f9fafb"/>
+  <g fill="#d1d5db" transform="translate(68, 55)">
+    <!-- A clean minimalist headphone icon -->
+    <path d="M32 8C18.8 8 8 18.8 8 32v16c0 4.4 3.6 8 8 8h4c2.2 0 4-1.8 4-4V36c0-2.2-1.8-4-4-4h-4v-4c0-8.8 7.2-16 16-16s16 7.2 16 16v4h-4c-2.2 0-4 1.8-4 4v16c0 2.2 1.8 4 4 4h4c4.4 0 8-3.6 8-8V32C56 18.8 45.2 8 32 8z"/>
+  </g>
+  <text x="100" y="145" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="11" font-weight="600" fill="#9ca3af" letter-spacing="1.5" text-anchor="middle">GIONEE AUDIO</text>
+</svg>

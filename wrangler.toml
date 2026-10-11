@@ -1,0 +1,8 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "sauvage-dior"
+compatibility_date = "2024-04-03"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gionee-v2-test"
+database_id = "2d5bd32f-d0fe-4b86-8352-2fd9737a45f4"

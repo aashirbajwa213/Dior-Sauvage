@@ -1,0 +1,1855 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+import Pagination from "../../components/admin/Pagination.astro";
+import ColumnSelector from "../../components/admin/ColumnSelector.astro";
+import { addTimelineEntry, getDefaultTimelineContent } from "../../utils/timeline";
+import { getAllSettings } from "../../utils/settings";
+import { getCourierTrackingUrl, getCourierProviderName, COURIER_PROVIDERS, getCachedCourierCities } from "../../utils/courier";
+
+const orderColumns = [
+    { id: "order_id", label: "Order ID", defaultVisible: true },
+    { id: "customer", label: "Customer Details", defaultVisible: true },
+    { id: "date", label: "Date & Time", defaultVisible: true },
+    { id: "amount", label: "Total Amount", defaultVisible: true },
+    { id: "risk", label: "Health / Risk", defaultVisible: true },
+    { id: "status", label: "Status", defaultVisible: true },
+    { id: "tracking", label: "Tracking ID", defaultVisible: true },
+    { id: "action", label: "Action", defaultVisible: true },
+];
+
+const seoTitle = "Admin Orders - Dior Sauvage Pakistan";
+
+const url = new URL(Astro.request.url);
+const search = url.searchParams.get("search") || "";
+const statusFilter = url.searchParams.get("status") || "";
+const riskFilter = url.searchParams.get("risk") || "";
+
+const page = parseInt(url.searchParams.get("page") || "1");
+const limit = parseInt(url.searchParams.get("limit") || "20");
+const offset = (page - 1) * limit;
+
+const period = url.searchParams.get("period") || "all";
+const customStart = url.searchParams.get("start") || "";
+const customEnd = url.searchParams.get("end") || "";
+
+let nowPktStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+let startDate = new Date(nowPktStr);
+let endDate = new Date(nowPktStr);
+
+if (period === "today") {
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "yesterday") {
+    startDate.setDate(startDate.getDate() - 1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "this_week") {
+    const day = startDate.getDay();
+    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+    startDate.setDate(diff);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "this_month") {
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "last_30_days") {
+    startDate.setDate(startDate.getDate() - 30);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "custom" && customStart && customEnd) {
+    startDate = new Date(customStart + "T00:00:00");
+    endDate = new Date(customEnd + "T23:59:59");
+}
+
+const PKT_OFFSET = 5 * 60 * 60 * 1000;
+startDate.setTime(startDate.getTime() - PKT_OFFSET);
+endDate.setTime(endDate.getTime() - PKT_OFFSET);
+
+const startStr = startDate.toISOString();
+const endStr = endDate.toISOString();
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let courierSettings: any = null;
+let activeCourier: any = COURIER_PROVIDERS.postex;
+let cachedCities: string[] = [];
+let availableProducts: any[] = [];
+
+let orders: any[] = [];
+let errorMsg = "";
+let successMsg = "";
+let totalItems = 0;
+let totalPages = 0;
+let stats = {
+    total: 0,
+    pending: 0,
+    shipped: 0,
+    out_for_delivery: 0,
+    delivered: 0,
+    revenue: 0,
+};
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml or start development using Astro proxy.";
+} else {
+    try {
+        try {
+            courierSettings = await getAllSettings(db);
+            const provKey = courierSettings.courier_default_provider || "postex";
+            activeCourier = COURIER_PROVIDERS[provKey] || COURIER_PROVIDERS.postex;
+        } catch (e) {
+            console.error("Failed to load courier settings:", e);
+        }
+
+        try {
+            cachedCities = await getCachedCourierCities(db, false);
+        } catch (e) {
+            console.error("Failed to load cities for orders modal:", e);
+        }
+
+        try {
+            const { results: prods } = await db.prepare("SELECT id, title, slug, base_price, original_price FROM products WHERE status = 'published' ORDER BY id ASC").all();
+            const { results: packs } = await db.prepare("SELECT id, product_id, pack_label, unit_count, pack_price, free_shipping FROM product_packs ORDER BY product_id ASC, unit_count ASC").all();
+            
+            availableProducts = (prods || []).map((p: any) => {
+                const productPacks = (packs || []).filter((pk: any) => pk.product_id === p.id);
+                return {
+                    id: p.id,
+                    title: p.title,
+                    slug: p.slug,
+                    base_price: p.base_price,
+                    original_price: p.original_price,
+                    packs: productPacks.map((pk: any) => ({
+                        id: pk.id,
+                        label: pk.pack_label,
+                        unit_count: pk.unit_count,
+                        price: pk.pack_price,
+                        free_shipping: pk.free_shipping === 1
+                    }))
+                };
+            });
+        } catch (e) {
+            console.error("Failed to load products for manual booking modal:", e);
+        }
+
+        // 1. Fetch Stats
+        const totalStats: any = await db.prepare(`
+            SELECT 
+                COUNT(*) as total, 
+                SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'Shipped' THEN 1 ELSE 0 END) as shipped,
+                SUM(CASE WHEN status = 'Out for Delivery' THEN 1 ELSE 0 END) as out_for_delivery,
+                SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status != 'Cancelled' THEN total_amount ELSE 0 END) as revenue
+            FROM orders
+        `).first();
+        
+        if (totalStats) {
+            stats.total = totalStats.total || 0;
+            stats.pending = totalStats.pending || 0;
+            stats.shipped = totalStats.shipped || 0;
+            stats.out_for_delivery = totalStats.out_for_delivery || 0;
+            stats.delivered = totalStats.delivered || 0;
+            stats.revenue = totalStats.revenue || 0;
+        }
+
+        // 1. Handle Status Updates & Actions (POST)
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "create_booking") {
+                const manualId = formData.get("order_id")?.toString().replace(/^#+/, '').trim();
+                let orderId = manualId;
+
+                if (!orderId) {
+                    const pakTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
+                    const currentMonth = String(pakTime.getMonth() + 1).padStart(2, '0');
+                    const orderPrefix = `GPK${currentMonth}`;
+                    try {
+                        const latestOrder = await db.prepare("SELECT id FROM orders WHERE id LIKE ? ORDER BY CAST(SUBSTR(id, 6) AS INTEGER) DESC LIMIT 1").bind(`${orderPrefix}%`).first();
+                        let sequence = 1;
+                        if (latestOrder && latestOrder.id) {
+                            const seqStr = String(latestOrder.id).substring(orderPrefix.length);
+                            const seqInt = parseInt(seqStr, 10);
+                            if (!isNaN(seqInt)) sequence = seqInt + 1;
+                        }
+                        orderId = `${orderPrefix}${String(sequence).padStart(3, '0')}`;
+                    } catch (e) {
+                        orderId = `${orderPrefix}${Math.random().toString(10).substring(2, 5)}`;
+                    }
+                }
+
+                const customerName = formData.get("customer_name")?.toString() || "";
+                const customerPhone = formData.get("customer_phone")?.toString() || "";
+                const customerEmail = formData.get("customer_email")?.toString() || "";
+                const city = formData.get("city")?.toString() || "";
+                const address = formData.get("address")?.toString() || "";
+                const totalAmount = parseFloat(formData.get("total_amount")?.toString() || "0");
+                const deliveryFee = parseFloat(formData.get("delivery_fee")?.toString() || "0");
+                const trackingNo = formData.get("tracking_no")?.toString() || null;
+                const status = formData.get("status")?.toString() || "Pending";
+                let orderSummary = formData.get("order_summary")?.toString() || "";
+                const customDate = formData.get("created_at")?.toString();
+                const itemsJson = formData.get("items_json")?.toString();
+                
+                let createdAtObj = new Date();
+                if (customDate) {
+                    try {
+                        const parsedDate = new Date(`${customDate}+05:00`);
+                        if (!isNaN(parsedDate.getTime())) {
+                            createdAtObj = parsedDate;
+                        }
+                    } catch (e) {}
+                }
+                const createdAt = createdAtObj.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+
+                try {
+                    let parsedItems: any[] = [];
+                    if (itemsJson) {
+                        try {
+                            parsedItems = JSON.parse(itemsJson);
+                        } catch (e) {}
+                    }
+
+                    if (!orderSummary && parsedItems.length > 0) {
+                        orderSummary = parsedItems.map(item => `${item.productName || item.product_name} (${item.packSizeLabel || item.pack_size_label || '1 Unit'}) x${item.quantity}`).join(", ");
+                    }
+
+                    await db.prepare(`
+                        INSERT INTO orders (
+                            id, customer_name, customer_phone, customer_email, city, address, 
+                            total_amount, delivery_fee, status, tracking_no, 
+                            order_summary, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `).bind(
+                        orderId, customerName, customerPhone, customerEmail, city, address,
+                        totalAmount, deliveryFee, status, trackingNo, orderSummary, createdAt
+                    ).run();
+
+                    // Insert individual items into order_items table
+                    if (parsedItems.length > 0) {
+                        for (const item of parsedItems) {
+                            const prodId = item.productId || item.product_id || 1;
+                            const prodName = item.productName || item.product_name || "Dior Sauvage 100ml";
+                            const unitPrice = parseFloat(item.unitPrice || item.unit_price || item.price || 0);
+                            const quantity = parseInt(item.quantity || 1, 10);
+                            const packLabel = item.packSizeLabel || item.pack_size_label || "1 Unit";
+
+                            await db.prepare(`
+                                INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity, pack_size_label)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            `).bind(
+                                orderId, prodId, prodName, unitPrice, quantity, packLabel
+                            ).run();
+                        }
+                    } else if (orderSummary) {
+                        await db.prepare(`
+                            INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity, pack_size_label)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        `).bind(
+                            orderId, 1, orderSummary, Math.max(0, totalAmount - deliveryFee), 1, "Standard Pack"
+                        ).run();
+                    }
+
+                    // Auto-calculate Order Health Score and sync Customer Profile (Real-Time)
+                    try {
+                        const { syncOrderRiskAndCustomer } = await import("../../utils/orderRiskSync");
+                        await syncOrderRiskAndCustomer(db, orderId);
+                    } catch (syncErr) {
+                        console.error(`Failed to auto-sync risk & customer for manual order #${orderId}:`, syncErr);
+                    }
+
+                    const { title, description } = getDefaultTimelineContent(status);
+                    await addTimelineEntry(db, orderId, status, "Manual Booking Created", `Admin manually created this booking with status: ${status}.`);
+                    successMsg = `Manual booking #${orderId} successfully created.`;
+                } catch (e: any) {
+                    errorMsg = `Failed to create booking: ${e.message}`;
+                }
+            } else if (action === "delete") {
+                const orderId = formData.get("order_id")?.toString();
+                if (orderId) {
+                    await db.prepare("DELETE FROM order_items WHERE order_id = ?").bind(orderId).run();
+                    await db.prepare("DELETE FROM order_timeline WHERE order_id = ?").bind(orderId).run();
+                    await db.prepare("DELETE FROM orders WHERE id = ?").bind(orderId).run();
+                    successMsg = `Order #${orderId} successfully deleted.`;
+                }
+            } else if (action === "bulk_book_shipments") {
+                const orderIdsRaw = formData.get("order_ids")?.toString();
+                if (orderIdsRaw) {
+                    const orderIds = orderIdsRaw.split(",").filter(id => id.trim() !== "");
+                    let successCount = 0;
+                    let errorCount = 0;
+                    const failedReasons: string[] = [];
+                    if (orderIds.length > 0) {
+                        const { createCourierOrder, COURIER_PROVIDERS } = await import("../../utils/courier");
+                        
+                        for (const id of orderIds) {
+                            const currentOrder: any = await db.prepare("SELECT status, tracking_no, city, address, customer_name, customer_phone, customer_email, total_amount FROM orders WHERE id = ?").bind(id).first();
+                            
+                            if (currentOrder && !currentOrder.tracking_no && (currentOrder.status === 'Pending' || currentOrder.status === 'Confirmed')) {
+                                const { results: items } = await db.prepare("SELECT product_name, quantity FROM order_items WHERE order_id = ?").bind(id).all();
+                                const productDesc = (items || []).map((i: any) => `${i.product_name} (${i.quantity} Units)`).join(", ");
+                                
+                                const bookingResult = await createCourierOrder(db, {
+                                    receiverName: currentOrder.customer_name,
+                                    receiverPhone: currentOrder.customer_phone,
+                                    receiverEmail: currentOrder.customer_email || "",
+                                    receiverAddress: currentOrder.address,
+                                    destinationCity: currentOrder.city,
+                                    pieces: (items || []).reduce((sum: number, i: any) => sum + i.quantity, 0) || 1,
+                                    weight: 1,
+                                    collectionAmount: currentOrder.total_amount,
+                                    productDescription: productDesc,
+                                    orderId: String(id)
+                                });
+                                
+                                if (bookingResult.success && bookingResult.data && bookingResult.data.tracking_no) {
+                                    const trackingNo = (bookingResult.data.thirdparty_tracking_no && bookingResult.data.thirdparty_tracking_no !== "null" && bookingResult.data.thirdparty_tracking_no !== "")
+                                        ? String(bookingResult.data.thirdparty_tracking_no)
+                                        : String(bookingResult.data.tracking_no);
+                                    const courierId = String(bookingResult.data.id);
+                                    const providerUsed = bookingResult.providerUsed || "postex";
+                                    const providerLabel = (bookingResult.providerUsed && COURIER_PROVIDERS[bookingResult.providerUsed]?.name) || "RS Courier";
+
+                                    await db.prepare("UPDATE orders SET tracking_no = ?, courier_order_id = ?, courier_provider = ?, status = 'Booked' WHERE id = ?").bind(trackingNo, courierId, providerUsed, id).run();
+                                    await addTimelineEntry(db, id, "Booked", "Shipment Booked", `Admin booked shipment via ${providerLabel} in bulk. Tracking ID: ${trackingNo}`);
+                                    successCount++;
+                                } else {
+                                    errorCount++;
+                                    const err = bookingResult.error || "Unknown error";
+                                    failedReasons.push(`Order #${id} (${currentOrder.city}): ${err}`);
+                                    console.error(`Bulk booking failed for ${id}:`, err);
+                                }
+                            }
+                        }
+                        
+                        if (successCount > 0) {
+                            successMsg = `${successCount} shipments successfully booked.`;
+                        }
+                        if (errorCount > 0) {
+                            const details = failedReasons.slice(0, 3).join("; ");
+                            errorMsg = errorMsg ? `${errorMsg} Failed to book ${errorCount} shipments: ${details}` : `Failed to book ${errorCount} shipments: ${details}`;
+                        }
+                        if (successCount === 0 && errorCount === 0) {
+                            errorMsg = "No eligible orders selected for booking (must be Pending/Confirmed without an existing tracking ID).";
+                        }
+                    }
+                }
+            } else if (action === "bulk_delete") {
+                const orderIdsRaw = formData.get("order_ids")?.toString();
+                if (orderIdsRaw) {
+                    const orderIds = orderIdsRaw.split(",").filter(id => id.trim() !== "");
+                    if (orderIds.length > 0) {
+                        for (const id of orderIds) {
+                            await db.prepare("DELETE FROM order_items WHERE order_id = ?").bind(id).run();
+                            await db.prepare("DELETE FROM order_timeline WHERE order_id = ?").bind(id).run();
+                            await db.prepare("DELETE FROM orders WHERE id = ?").bind(id).run();
+                        }
+                        successMsg = `${orderIds.length} orders successfully deleted.`;
+                    }
+                }
+            } else if (action === "bulk_update_status") {
+                const orderIdsRaw = formData.get("order_ids")?.toString();
+                const newStatus = formData.get("new_status")?.toString();
+                if (orderIdsRaw && newStatus) {
+                    const orderIds = orderIdsRaw.split(",").filter(id => id.trim() !== "");
+                    if (orderIds.length > 0) {
+                        for (const id of orderIds) {
+                            if (newStatus === "Shipped") {
+                                await db.prepare("UPDATE orders SET status = ?, shipped_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newStatus, id).run();
+                            } else if (newStatus === "Delivered") {
+                                await db.prepare("UPDATE orders SET status = ?, delivered_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newStatus, id).run();
+                            } else {
+                                await db.prepare("UPDATE orders SET status = ? WHERE id = ?").bind(newStatus, id).run();
+                            }
+                            const { title, description } = getDefaultTimelineContent(newStatus);
+                            await addTimelineEntry(db, id, newStatus, title, description);
+
+                            // Email/WhatsApp Notifications for Shipped
+                            if (newStatus === "Shipped") {
+                                try {
+                                    const shippedOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
+                                    if (shippedOrder) {
+                                        const trackingUrl = `https://sauvagedior.pk/track-order/${shippedOrder.id}/`;
+                                        const trackingNo = shippedOrder.tracking_no || "N/A";
+                                        const { sendShippedNotifications } = await import("../../utils/notifications");
+                                        await sendShippedNotifications(db, Astro.locals.runtime?.env, shippedOrder, trackingNo, trackingUrl);
+                                    }
+                                } catch (err: any) {
+                                    console.error(`Failed to process bulk Shipped notifications for ${id}:`, err);
+                                }
+                            } else if (newStatus === "Out for Delivery") {
+                                try {
+                                    const targetOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(id).first();
+                                    if (targetOrder) {
+                                        const { sendOrderOutForDeliveryAlert } = await import("../../utils/whatsapp");
+                                        await sendOrderOutForDeliveryAlert(db, Astro.locals.runtime?.env, targetOrder, targetOrder.tracking_no, targetOrder.courier_status, { forceSend: true });
+
+                                        const { sendOrderOutForDeliveryEmail } = await import("../../utils/notifications");
+                                        await sendOrderOutForDeliveryEmail(db, Astro.locals.runtime?.env, targetOrder, targetOrder.tracking_no, targetOrder.courier_status, { forceSend: true });
+                                    }
+                                } catch (err: any) {
+                                    console.error(`Failed to process bulk Out for Delivery alert for ${id}:`, err);
+                                }
+                            }
+                        }
+                        successMsg = `${orderIds.length} orders successfully updated to ${newStatus}.`;
+                    }
+                }
+            } else if (action === "cancel_label") {
+                const orderId = formData.get("order_id")?.toString();
+                if (orderId) {
+                    const currentOrder: any = await db.prepare("SELECT tracking_no FROM orders WHERE id = ?").bind(orderId).first();
+                    if (currentOrder && currentOrder.tracking_no) {
+                        const { cancelCourierOrder } = await import("../../utils/courier");
+                        const cancelResult = await cancelCourierOrder(db, currentOrder.tracking_no);
+                        
+                        if (cancelResult.success) {
+                            await db.prepare("UPDATE orders SET tracking_no = NULL, courier_order_id = NULL, courier_status = NULL, status = 'Confirmed' WHERE id = ?").bind(orderId).run();
+                            await addTimelineEntry(db, orderId, "Confirmed", "Shipping Label Cancelled", `Admin cancelled the shipping label (${currentOrder.tracking_no}). Status reverted to Confirmed.`);
+                            successMsg = "Shipping label successfully cancelled.";
+                        } else {
+                            errorMsg = `Failed to cancel label via Courier API: ${cancelResult.error}`;
+                        }
+                    } else {
+                        errorMsg = "Order does not have an active shipping label.";
+                    }
+                }
+            } else {
+                const orderId = formData.get("order_id")?.toString();
+                const newStatus = formData.get("new_status")?.toString();
+                
+                if (orderId && newStatus) {
+                    // Update order and set timestamps if needed
+                    if (newStatus === "Shipped") {
+                        await db.prepare("UPDATE orders SET status = ?, shipped_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newStatus, orderId).run();
+                    } else if (newStatus === "Delivered") {
+                        await db.prepare("UPDATE orders SET status = ?, delivered_at = CURRENT_TIMESTAMP WHERE id = ?").bind(newStatus, orderId).run();
+                    } else {
+                        await db.prepare("UPDATE orders SET status = ? WHERE id = ?").bind(newStatus, orderId).run();
+                    }
+
+                    // Log to timeline
+                    const { title, description } = getDefaultTimelineContent(newStatus);
+                    await addTimelineEntry(db, orderId, newStatus, title, description);
+
+                    if (newStatus === "Shipped") {
+                        try {
+                            const shippedOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
+                            if (shippedOrder) {
+                                const trackingUrl = `https://sauvagedior.pk/track-order/${shippedOrder.id}/`;
+                                const trackingNo = shippedOrder.tracking_no || "N/A";
+                                const { sendShippedNotifications } = await import("../../utils/notifications");
+                                const notifResult = await sendShippedNotifications(db, Astro.locals.runtime?.env, shippedOrder, trackingNo, trackingUrl);
+                                
+                                if (notifResult.successMsg) successMsg = successMsg ? successMsg + " " + notifResult.successMsg : notifResult.successMsg;
+                                if (notifResult.errorMsg) errorMsg = errorMsg ? errorMsg + " " + notifResult.errorMsg : notifResult.errorMsg;
+                            }
+                        } catch (err: any) {
+                            console.error("Failed to process Shipped notifications from orders list:", err);
+                        }
+                    } else if (newStatus === "Out for Delivery") {
+                        try {
+                            const targetOrder = await db.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
+                            if (targetOrder) {
+                                const { sendOrderOutForDeliveryAlert } = await import("../../utils/whatsapp");
+                                const waRes = await sendOrderOutForDeliveryAlert(db, Astro.locals.runtime?.env, targetOrder, targetOrder.tracking_no, targetOrder.courier_status, { forceSend: true });
+                                if (waRes.success) {
+                                    successMsg = successMsg ? successMsg + " WhatsApp Out for Delivery alert sent." : "WhatsApp Out for Delivery alert sent.";
+                                }
+
+                                const { sendOrderOutForDeliveryEmail } = await import("../../utils/notifications");
+                                const emailRes = await sendOrderOutForDeliveryEmail(db, Astro.locals.runtime?.env, targetOrder, targetOrder.tracking_no, targetOrder.courier_status, { forceSend: true });
+                                if (emailRes.success) {
+                                    successMsg = successMsg ? successMsg + " Out for Delivery email sent." : "Out for Delivery email sent.";
+                                }
+                            }
+                        } catch (err: any) {
+                            console.error("Failed to process Out for Delivery alert from orders list:", err);
+                        }
+                    }
+
+                    if (!successMsg && !errorMsg) {
+                        successMsg = `Order #${orderId} status successfully updated to ${newStatus}.`;
+                    }
+                }
+            }
+        }
+        let query = `
+            SELECT 
+                o.*,
+                r.health_score,
+                r.risk_level,
+                r.all_flags,
+                r.recommendations,
+                r.is_serial_returner,
+                r.is_high_risk_city,
+                r.is_landmark_only,
+                cp.risk_tier as customer_risk_tier,
+                cp.total_returned as customer_lifetime_returns
+            FROM orders o
+            LEFT JOIN order_risk_scores r ON r.order_id = o.id
+            LEFT JOIN customer_profiles cp ON cp.phone = o.customer_phone
+        `;
+
+        let params: any[] = [];
+        let whereClauses: string[] = [];
+
+        if (search) {
+            whereClauses.push(`(o.id LIKE ? OR o.customer_name LIKE ? OR o.customer_phone LIKE ? OR o.city LIKE ?)`);
+            const wildSearch = `%${search}%`;
+            params.push(wildSearch, wildSearch, wildSearch, wildSearch);
+        }
+
+        if (statusFilter) {
+            whereClauses.push(`o.status = ?`);
+            params.push(statusFilter);
+        }
+
+        if (riskFilter) {
+            whereClauses.push(`r.risk_level = ?`);
+            params.push(riskFilter);
+        }
+        
+        if (period !== 'all') {
+            whereClauses.push(`DATETIME(o.created_at) >= DATETIME(?) AND DATETIME(o.created_at) <= DATETIME(?)`);
+            params.push(startStr, endStr);
+        }
+
+        // 2. Count Total Items for Pagination
+        let countQuery = `
+            SELECT COUNT(*) as count 
+            FROM orders o
+            LEFT JOIN order_risk_scores r ON r.order_id = o.id
+        `;
+        if (whereClauses.length > 0) {
+            countQuery += ` WHERE ` + whereClauses.join(" AND ");
+        }
+
+        const countStmt = db.prepare(countQuery);
+        const countResult: any = params.length > 0 ? await countStmt.bind(...params).first() : await countStmt.first();
+        totalItems = countResult?.count || 0;
+        totalPages = Math.ceil(totalItems / limit);
+
+        if (whereClauses.length > 0) {
+            query += ` WHERE ` + whereClauses.join(" AND ");
+        }
+
+        query += ` ORDER BY DATETIME(o.created_at) DESC LIMIT ? OFFSET ?`;
+        params.push(limit, offset);
+
+        const stmt = db.prepare(query);
+        const { results } = await stmt.bind(...params).all();
+        orders = results || [];
+
+        // Auto-score any orders missing health score on-the-fly (Real-Time)
+        const unscored = orders.filter((o: any) => o.health_score === null || o.health_score === undefined);
+        if (unscored.length > 0) {
+            try {
+                const { syncOrderRiskAndCustomer } = await import("../../utils/orderRiskSync");
+                for (const un of unscored) {
+                    const res = await syncOrderRiskAndCustomer(db, un.id);
+                    if (res) {
+                        un.health_score = res.healthScore;
+                        un.risk_level = res.riskLevel;
+                    }
+                }
+            } catch (err) {}
+        }
+
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+// Function to helper status color
+function getStatusStyles(status: string) {
+    switch (status) {
+        case "Pending":
+            return "bg-amber-50 text-amber-700 border-amber-200";
+        case "Confirmed":
+            return "bg-blue-50 text-blue-700 border-blue-200";
+        case "Booked":
+            return "bg-purple-50 text-purple-700 border-purple-200";
+        case "Shipped":
+            return "bg-indigo-50 text-indigo-700 border-indigo-200";
+        case "Out for Delivery":
+            return "bg-amber-50 text-amber-700 border-amber-300 ring-1 ring-amber-300/50";
+        case "Delivered":
+            return "bg-emerald-50 text-emerald-700 border-emerald-200";
+        case "Returned":
+            return "bg-rose-50 text-rose-700 border-rose-200";
+        case "Cancelled":
+            return "bg-gray-50 text-gray-700 border-gray-200";
+        default:
+            return "bg-gray-50 text-gray-700 border-gray-200";
+    }
+}
+
+// Function for health risk badge styling
+function getHealthBadgeStyles(score: number | null | undefined, riskLevel: string | null | undefined) {
+    if (score === null || score === undefined) {
+        return {
+            badgeClass: "bg-gray-50 text-gray-600 border-gray-200",
+            dotClass: "bg-gray-400",
+            label: "N/A"
+        };
+    }
+    if (score < 40 || riskLevel === "Critical") {
+        return {
+            badgeClass: "bg-red-50 text-red-700 border-red-200 font-semibold ring-1 ring-red-200",
+            dotClass: "bg-red-500 animate-pulse",
+            label: `${score} Critical`
+        };
+    }
+    if (score < 60 || riskLevel === "High") {
+        return {
+            badgeClass: "bg-orange-50 text-orange-700 border-orange-200 font-medium",
+            dotClass: "bg-orange-500",
+            label: `${score} High`
+        };
+    }
+    if (score < 80 || riskLevel === "Medium") {
+        return {
+            badgeClass: "bg-amber-50 text-amber-700 border-amber-200",
+            dotClass: "bg-amber-500",
+            label: `${score} Med`
+        };
+    }
+    return {
+        badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dotClass: "bg-emerald-500",
+        label: `${score} Healthy`
+    };
+}
+---
+
+<AdminLayout title={seoTitle} activePage="orders">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+        <div>
+            <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">Orders Management</h1>
+            <p class="text-gray-500 mt-1">Manage and track your customer orders and shipments.</p>
+        </div>
+        <div class="flex gap-2">
+            <button type="button" id="openCreateBookingBtn" onclick="openCreateBookingModal()" class="px-4 py-2.5 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md shadow-sm transition-colors flex items-center gap-2 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                Create Booking
+            </button>
+            <button onclick="window.location.reload()" class="p-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-md shadow-sm transition-all hover:scale-[1.02]" title="Refresh Orders">
+                <Icon name="refresh-cw" class="w-5 h-5" />
+            </button>
+        </div>
+    </div>
+
+
+
+    <!-- Error Banner -->
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-8 flex items-start gap-3">
+            <div class="bg-red-100 text-red-800 p-1.5 rounded-full shrink-0">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+            </div>
+            <div>
+                <p class="font-semibold">Error Occurred</p>
+                <p class="text-sm mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Success Banner -->
+    {successMsg && (
+        <div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded-xl mb-8 flex items-start gap-3 shadow-sm">
+            <div class="bg-green-100 text-green-800 p-1.5 rounded-full shrink-0">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+            </div>
+            <div>
+                <p class="font-semibold">Update Successful</p>
+                <p class="text-sm mt-0.5">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Filter & Search Bar -->
+    <div class="bg-white p-4 rounded-lg border border-gray-100 shadow-sm mb-6 flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
+        <form method="GET" class="flex-1 grid md:grid-cols-5 gap-3">
+            <div class="relative md:col-span-1">
+                <input
+                    type="text"
+                    name="search"
+                    value={search}
+                    placeholder="Search ID, name..."
+                    class="w-full pl-10 pr-4 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white"
+                />
+                <div class="absolute left-3.5 top-3.5 text-gray-400">
+                    <Icon name="search" class="w-4 h-4" />
+                </div>
+            </div>
+            <div>
+                <select
+                    name="status"
+                    class="w-full pl-3 pr-10 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                >
+                    <option value="">All Statuses</option>
+                    <option value="Pending" selected={statusFilter === "Pending"}>Pending</option>
+                    <option value="Confirmed" selected={statusFilter === "Confirmed"}>Confirmed</option>
+                    <option value="Booked" selected={statusFilter === "Booked"}>Booked</option>
+                    <option value="Shipped" selected={statusFilter === "Shipped"}>Shipped</option>
+                    <option value="Out for Delivery" selected={statusFilter === "Out for Delivery"}>Out for Delivery</option>
+                    <option value="Delivered" selected={statusFilter === "Delivered"}>Delivered</option>
+                    <option value="Returned" selected={statusFilter === "Returned"}>Returned</option>
+                    <option value="Cancelled" selected={statusFilter === "Cancelled"}>Cancelled</option>
+                </select>
+            </div>
+            <div>
+                <select
+                    name="risk"
+                    class="w-full pl-3 pr-10 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                >
+                    <option value="">All Risk Tiers</option>
+                    <option value="Low" selected={riskFilter === "Low"}>Low Risk (Safe)</option>
+                    <option value="Medium" selected={riskFilter === "Medium"}>Medium Risk</option>
+                    <option value="High" selected={riskFilter === "High"}>High Risk</option>
+                    <option value="Critical" selected={riskFilter === "Critical"}>Critical Risk</option>
+                </select>
+            </div>
+            <div>
+                <select
+                    name="period"
+                    id="period-select"
+                    class="w-full pl-3 pr-10 py-2.5 rounded-md border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm text-gray-800 bg-white appearance-none admin-select"
+                >
+                    <option value="all" selected={period === 'all'}>All Time</option>
+                    <option value="today" selected={period === 'today'}>Today</option>
+                    <option value="yesterday" selected={period === 'yesterday'}>Yesterday</option>
+                    <option value="this_week" selected={period === 'this_week'}>This Week</option>
+                    <option value="this_month" selected={period === 'this_month'}>This Month</option>
+                    <option value="last_30_days" selected={period === 'last_30_days'}>Last 30 Days</option>
+                    <option value="custom" selected={period === 'custom'}>Custom Range...</option>
+                </select>
+            </div>
+
+            <div class="flex gap-2 col-span-full md:col-span-1">
+                <button type="submit" class="flex-1 py-2.5 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-md text-sm transition-colors shadow-sm active:scale-[0.98]">
+                    Filter
+                </button>
+                {(search || statusFilter || period !== 'all') && (
+                    <a href="/admin/orders/" class="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-md text-sm transition-colors flex items-center justify-center" title="Clear filters">
+                        Reset
+                    </a>
+                )}
+            </div>
+            <div id="custom-date-inputs" class={`md:col-span-4 flex items-center gap-2 ${period === 'custom' ? '' : 'hidden'}`}>
+                <input type="date" name="start" value={customStart} class="text-sm border border-gray-200 rounded-md py-1.5 px-3" required={period === 'custom'} />
+                <span class="text-gray-400 text-sm">to</span>
+                <input type="date" name="end" value={customEnd} class="text-sm border border-gray-200 rounded-md py-1.5 px-3" required={period === 'custom'} />
+            </div>
+        </form>
+    </div>
+
+    <!-- Orders Table -->
+    <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+            <span class="text-xs font-bold text-gray-700 uppercase tracking-wider">{totalItems} Orders Found</span>
+            <ColumnSelector tableId="orders-table" storageKey="admin_orders_cols" columns={orderColumns} />
+        </div>
+        <div class="overflow-x-auto">
+            <table id="orders-table" class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <th class="p-4 w-12 text-center">
+                            <input type="checkbox" id="selectAll" class="rounded border-gray-300 text-brand-orange focus:ring-brand-orange cursor-pointer w-4 h-4" />
+                        </th>
+                        <th data-col="order_id" class="p-4">Order ID</th>
+                        <th data-col="customer" class="p-4">Customer Details</th>
+                        <th data-col="date" class="p-4">Date & Time</th>
+                        <th data-col="amount" class="p-4">Total Amount</th>
+                        <th data-col="risk" class="p-4">Health / Risk</th>
+                        <th data-col="status" class="p-4">Status</th>
+                        <th data-col="tracking" class="p-4">Tracking ID</th>
+                        <th data-col="action" class="p-4 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-sm text-gray-800">
+                    {orders.length === 0 ? (
+                        <tr>
+                            <td colspan="9" class="p-8 text-center text-gray-500">
+                                <div class="max-w-sm mx-auto flex flex-col items-center">
+                                    <div class="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-gray-400 mb-2">
+                                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                                        </svg>
+                                    </div>
+                                    <p class="font-semibold text-gray-800">No Orders Found</p>
+                                    <p class="text-xs text-gray-400 mt-1">There are no orders that match your criteria. Try adjusting your search term or filter settings.</p>
+                                </div>
+                            </td>
+                        </tr>
+                    ) : (
+                        orders.map((order) => {
+                            const formattedDate = new Date(order.created_at).toLocaleString('en-US', {
+                                timeZone: 'Asia/Karachi',
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                            });
+                            return (
+                                <tr class="hover:bg-gray-50/50 transition-colors">
+                                    <td class="p-4 text-center">
+                                        <input 
+                                            type="checkbox" 
+                                            class="row-checkbox rounded border-gray-300 text-brand-orange focus:ring-brand-orange cursor-pointer w-4 h-4" 
+                                            value={order.id} 
+                                            data-courier-id={order.courier_order_id || ""}
+                                        />
+                                    </td>
+                                    <td data-col="order_id" class="p-4 font-semibold text-brand-orange tracking-wider">
+                                        #{order.id}
+                                    </td>
+                                    <td data-col="customer" class="p-4">
+                                        <div class="flex items-center gap-1.5 flex-wrap">
+                                            <span class="font-medium text-gray-900">{order.customer_name}</span>
+                                            {order.customer_lifetime_returns > 0 && (
+                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200" title={`Customer has returned ${order.customer_lifetime_returns} orders in the past`}>
+                                                    <Icon name="alert-triangle" class="w-3 h-3 text-rose-700" />
+                                                    <span>{order.customer_lifetime_returns} {order.customer_lifetime_returns === 1 ? 'Return' : 'Returns'}</span>
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div class="text-xs text-gray-500">{order.customer_phone} <span class="text-gray-300 mx-1">|</span> {order.city}</div>
+                                    </td>
+                                    <td data-col="date" class="p-4 text-xs text-gray-500">
+                                        {formattedDate}
+                                    </td>
+                                    <td data-col="amount" class="p-4 font-medium text-gray-900">
+                                        PKR {order.total_amount.toLocaleString()}
+                                    </td>
+                                    <td data-col="risk" class="p-4">
+                                        {(() => {
+                                            const badge = getHealthBadgeStyles(order.health_score, order.risk_level);
+                                            return (
+                                                <div class="inline-flex flex-col gap-1 items-start">
+                                                    <span class={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs border ${badge.badgeClass}`}>
+                                                        <span class={`w-1.5 h-1.5 rounded-full ${badge.dotClass}`}></span>
+                                                        <span>{badge.label}</span>
+                                                    </span>
+                                                    {order.is_serial_returner === 1 && (
+                                                        <span class="text-[10px] font-bold text-red-600 tracking-tight">Serial Returner</span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
+                                    </td>
+                                    <td data-col="status" class="p-4">
+                                        <form method="POST" class="inline-block relative">
+                                            <input type="hidden" name="order_id" value={order.id} />
+                                            <select 
+                                                name="new_status" 
+                                                onchange="this.form.submit()" 
+                                                class={`inline-flex items-center pl-3 pr-8 py-1 rounded-full text-xs font-semibold border focus:outline-none focus:ring-2 focus:ring-brand-orange/20 cursor-pointer appearance-none ${getStatusStyles(order.status)}`}
+                                                style="background-position: right 0.4rem center; background-size: 1rem 1rem;"
+                                            >
+                                                <option value="Pending" selected={order.status === 'Pending'}>Pending</option>
+                                                <option value="Confirmed" selected={order.status === 'Confirmed'}>Confirmed</option>
+                                                <option value="Booked" selected={order.status === 'Booked'}>Booked</option>
+                                                <option value="Shipped" selected={order.status === 'Shipped'}>Shipped</option>
+                                                <option value="Out for Delivery" selected={order.status === 'Out for Delivery'}>Out for Delivery</option>
+                                                <option value="Delivered" selected={order.status === 'Delivered'}>Delivered</option>
+                                                <option value="Returned" selected={order.status === 'Returned'}>Returned</option>
+                                                <option value="Cancelled" selected={order.status === 'Cancelled'}>Cancelled</option>
+                                            </select>
+                                        </form>
+                                    </td>
+                                    <td data-col="tracking" class="p-4">
+                                        {order.tracking_no ? (
+                                            <div class="flex items-center gap-1.5">
+                                                <a 
+                                                    href={getCourierTrackingUrl(courierSettings?.courier_default_provider, order.tracking_no)} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer" 
+                                                    class="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 hover:text-indigo-900 px-2 py-0.5 rounded border border-indigo-100 transition-colors inline-flex items-center gap-1" 
+                                                    title={`Track on ${getCourierProviderName(courierSettings?.courier_default_provider, order.tracking_no)}`}
+                                                >
+                                                    <span>{order.tracking_no}</span>
+                                                    <svg class="w-3 h-3 text-indigo-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                                                </a>
+                                                <button type="button" class="text-indigo-400 hover:text-indigo-700 focus:outline-none transition-colors" onclick={`navigator.clipboard.writeText('${order.tracking_no}'); this.innerHTML='<svg class=\\'w-3.5 h-3.5\\' fill=\\'none\\' stroke=\\'currentColor\\' viewBox=\\'0 0 24 24\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' stroke-width=\\'2\\' d=\\'M5 13l4 4L19 7\\'></path></svg>'; setTimeout(() => this.innerHTML='<svg class=\\'w-3.5 h-3.5\\' fill=\\'none\\' stroke=\\'currentColor\\' viewBox=\\'0 0 24 24\\'><path stroke-linecap=\\'round\\' stroke-linejoin=\\'round\\' stroke-width=\\'2\\' d=\\'M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z\\'></path></svg>', 2000);`} title="Copy Tracking ID">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                                </button>
+                                                <button type="button" onclick={`openCancelModal('${order.id}')`} class="text-rose-400 hover:text-rose-700 focus:outline-none transition-colors" title="Cancel Label">
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <span class="text-xs text-gray-400 font-medium">-</span>
+                                        )}
+                                    </td>
+                                    <td data-col="action" class="p-4 text-right">
+                                        <div class="flex items-center justify-end gap-1.5">
+                                            {order.courier_order_id && (
+                                                <a 
+                                                    href={`https://portal.rscourier.pk/invoicehtml.php?order_id=${order.courier_order_id}&booking=1`} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer" 
+                                                    class="p-1.5 text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded transition-colors" 
+                                                    title="Print Shipping Label (Flyer Label)"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                                                </a>
+                                            )}
+                                            <a href={`/admin/orders/${order.id}/`} class="p-1.5 text-gray-400 hover:text-brand-orange hover:bg-orange-50 rounded transition-colors" title="Manage Order">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                            </a>
+                                            <button type="button" onclick={`openDeleteModal('${order.id}')`} class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors" title="Delete Order">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })
+                    )}
+                </tbody>
+            </table>
+        </div>
+        
+        {totalItems > 0 && (
+            <Pagination 
+                currentPage={page} 
+                totalPages={totalPages} 
+                totalItems={totalItems} 
+                limit={limit} 
+            />
+        )}
+    </div>
+
+    </div>
+
+    <!-- Create Booking Modal -->
+    <div id="createBookingModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-4">
+        <div class="bg-white rounded-2xl p-5 sm:p-6 w-full max-w-3xl shadow-2xl max-h-[92vh] overflow-y-auto border border-gray-100">
+            <div class="flex items-center justify-between pb-3 mb-4 border-b border-gray-100">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <span class="w-8 h-8 rounded-lg bg-orange-100 text-brand-orange flex items-center justify-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    </span>
+                    Create Manual Booking
+                </h2>
+                <button type="button" onclick="closeCreateBookingModal()" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors" aria-label="Close dialog">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" id="createBookingForm" class="space-y-4">
+                <input type="hidden" name="action" value="create_booking" />
+                <input type="hidden" name="items_json" id="book_items_json" value="[]" />
+                
+                <!-- Customer Quick Search -->
+                <div class="bg-gray-50/80 p-3.5 rounded-xl border border-gray-200/80">
+                    <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                        <svg class="w-3.5 h-3.5 text-brand-orange" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                        Search Existing Customer (Optional)
+                    </label>
+                    <div class="relative">
+                        <input type="text" id="customerSearchInput" placeholder="Search customer by name or phone (e.g. 03001234567)..." class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm bg-white" autocomplete="off" />
+                        <div id="customerSearchResults" class="absolute z-30 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl hidden max-h-48 overflow-y-auto">
+                            <!-- Results will be populated here -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Order ID</label>
+                        <input type="text" name="order_id" placeholder="Auto-generated (e.g. GPK09083)" readonly class="w-full px-3 py-2 border border-gray-200 bg-gray-50 text-gray-500 font-mono rounded-lg focus:outline-none text-xs sm:text-sm cursor-not-allowed" title="Order ID is auto-generated to maintain sequence" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Date & Time (PKT)</label>
+                        <input type="datetime-local" name="created_at" id="createBookingDate" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm" />
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Customer Name *</label>
+                        <input type="text" name="customer_name" id="book_customer_name" required placeholder="e.g. Muhammad Ali" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Phone No *</label>
+                        <input type="text" name="customer_phone" id="book_customer_phone" required placeholder="e.g. 03001234567" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm font-mono" />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Email Address (Optional)</label>
+                        <input type="email" name="customer_email" id="book_customer_email" placeholder="customer@example.com" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm" />
+                    </div>
+                    
+                    <!-- Searchable City Dropdown (Exact match with checkout) -->
+                    <div class="relative" id="book_city_container">
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">City / Destination *</label>
+                        <input type="hidden" name="city" id="book_customer_city" required value="" />
+                        <div class="relative">
+                            <input 
+                                type="text" 
+                                id="book_city_input" 
+                                placeholder="Search city (e.g. Lahore, Karachi, Islamabad)..." 
+                                autocomplete="off"
+                                required
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm bg-white" 
+                            />
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-2.5 pointer-events-none text-gray-400">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                            </div>
+                        </div>
+                        <!-- City Dropdown List -->
+                        <div id="book_city_dropdown" class="absolute left-0 right-0 z-40 mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl hidden max-h-56 overflow-y-auto">
+                            <ul id="book_city_list" class="divide-y divide-gray-50 text-xs sm:text-sm">
+                                {cachedCities.filter((c: string) => c && c !== "#N/A").map((c: string) => (
+                                    <li class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-gray-700 hover:text-brand-orange transition-colors book-city-item" data-city={c}>{c}</li>
+                                ))}
+                                <li id="book_city_no_results" class="px-4 py-3 text-xs text-gray-400 text-center hidden">No matching cities found</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Full Shipping Address *</label>
+                        <textarea name="address" id="book_customer_address" required rows="2" placeholder="House #, Street #, Sector/Area, Landmark..." class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm"></textarea>
+                    </div>
+
+                    <!-- PRODUCTS & BUNDLE VARIATIONS SELECTOR SECTION -->
+                    <div class="md:col-span-2 bg-gray-50/70 p-4 rounded-xl border border-gray-200/90 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xs sm:text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                                    <svg class="w-4 h-4 text-brand-orange" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+                                    Order Items & Bundle Variations
+                                </h3>
+                                <p class="text-[11px] text-gray-500">Select product & bundle pack (e.g. 1 Pack, Pack of 2, Pack of 3).</p>
+                            </div>
+                            <button type="button" id="addBookingItemBtn" class="px-2.5 py-1.5 bg-white border border-gray-300 hover:border-brand-orange text-gray-700 hover:text-brand-orange font-bold text-xs rounded-lg transition-colors shadow-2xs flex items-center gap-1">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                                + Add Product Item
+                            </button>
+                        </div>
+
+                        <!-- Dynamic Items Container -->
+                        <div id="bookingItemsList" class="space-y-2.5">
+                            <!-- Injected dynamically via JS -->
+                        </div>
+
+                        <!-- Subtotal & Calculations Display -->
+                        <div class="pt-2 border-t border-gray-200/80 flex items-center justify-between text-xs">
+                            <span class="text-gray-500 font-medium">Items Subtotal:</span>
+                            <span id="bookingSubtotalDisplay" class="font-bold text-gray-900 font-mono">PKR 0</span>
+                        </div>
+                    </div>
+
+                    <!-- Financial & Status Fields -->
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Delivery Charges (Rs)</label>
+                        <input type="number" name="delivery_fee" id="book_delivery_fee" min="0" value="200" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm font-mono font-semibold" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Total COD Amount (Rs) *</label>
+                        <input type="number" name="total_amount" id="book_total_amount" required min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm font-mono font-bold text-brand-orange bg-orange-50/30" />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Initial Status</label>
+                        <select name="status" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm font-medium">
+                            <option value="Pending" selected>Pending</option>
+                            <option value="Confirmed">Confirmed</option>
+                            <option value="Booked">Booked</option>
+                            <option value="Shipped">Shipped</option>
+                            <option value="Out for Delivery">Out for Delivery</option>
+                            <option value="Delivered">Delivered</option>
+                            <option value="Returned">Returned</option>
+                            <option value="Cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Tracking ID (Optional)</label>
+                        <input type="text" name="tracking_no" placeholder="Leave empty for new booking" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm font-mono" />
+                    </div>
+                    
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Order Summary / Note</label>
+                        <textarea name="order_summary" id="book_order_summary" rows="2" placeholder="Auto-populated from items or write custom note..." class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange text-xs sm:text-sm"></textarea>
+                    </div>
+                </div>
+                
+                <div class="flex items-center justify-end gap-3 pt-4 border-t border-gray-100 mt-5">
+                    <button type="button" onclick="closeCreateBookingModal()" class="px-4 py-2 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-50 font-semibold text-xs sm:text-sm transition-colors cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 bg-brand-orange text-white rounded-xl hover:bg-orange-600 font-bold text-xs sm:text-sm transition-colors shadow-sm cursor-pointer flex items-center gap-1.5">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        Create Booking
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Cancel Label Modal -->
+    <div id="cancelLabelModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h2 class="text-xl font-bold mb-2 text-gray-900 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-rose-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                Cancel Shipping Label?
+            </h2>
+            <p class="text-sm text-gray-600 mb-6">Are you sure you want to cancel this shipping label? This action cannot be undone and will void the current tracking number.</p>
+            <form method="POST" id="cancelLabelForm">
+                <input type="hidden" name="action" value="cancel_label" />
+                <input type="hidden" name="order_id" id="cancelLabelOrderId" value="" />
+                <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                    <button type="button" onclick="closeCancelModal()" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-semibold text-sm transition-colors">Go Back</button>
+                    <button type="submit" class="px-4 py-2 bg-rose-600 text-white rounded hover:bg-rose-700 font-semibold text-sm transition-colors">Yes, Cancel Label</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Order Modal -->
+    <div id="deleteOrderModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h2 class="text-xl font-bold mb-2 text-gray-900 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Delete Order?
+            </h2>
+            <p class="text-sm text-gray-600 mb-6">Are you sure you want to delete this order? This action cannot be undone.</p>
+            <form method="POST" id="deleteOrderForm">
+                <input type="hidden" name="action" value="delete" />
+                <input type="hidden" name="order_id" id="deleteOrderId" value="" />
+                <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                    <button type="button" onclick="closeDeleteModal()" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-semibold text-sm transition-colors">Go Back</button>
+                    <button type="submit" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm transition-colors">Yes, Delete Order</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Delete Modal -->
+    <div id="bulkDeleteModal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h2 class="text-xl font-bold mb-2 text-gray-900 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                Delete Selected Orders?
+            </h2>
+            <p class="text-sm text-gray-600 mb-6">Are you sure you want to delete all selected orders? This action cannot be undone.</p>
+            <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button type="button" onclick="closeBulkDeleteModal()" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-semibold text-sm transition-colors">Go Back</button>
+                <button type="button" onclick="confirmBulkDelete()" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 font-semibold text-sm transition-colors">Yes, Delete Orders</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Book Shipments Modal -->
+    <div id="bulkBookModal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+            <h2 class="text-xl font-bold mb-2 text-gray-900 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                Book Selected Shipments?
+            </h2>
+            <p class="text-sm text-gray-600 mb-4">Are you sure you want to book shipments for the selected orders via RS Courier? Eligible orders must be Pending or Confirmed and not have an existing tracking ID.</p>
+            
+            <div class="mb-5 bg-orange-50/70 border border-orange-200 rounded-lg p-3 flex items-center gap-3">
+                <div class="w-9 h-9 bg-white rounded border border-orange-100 flex items-center justify-center p-1 shrink-0">
+                    <img src={activeCourier?.logo || "/images/couriers/postex.png"} alt={activeCourier?.name || "Active Courier"} class="max-h-full max-w-full object-contain" />
+                </div>
+                <div class="text-xs">
+                    <span class="text-gray-500 font-medium">Active Courier Partner:</span>
+                    <p class="text-gray-900 font-bold text-sm mt-0.5">{activeCourier?.name || "PostEx"} <span class="text-gray-400 font-normal text-xs">({courierSettings?.courier_service_type || activeCourier?.serviceType || "Overnight"})</span></p>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button type="button" onclick="closeBulkBookModal()" class="px-4 py-2 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 font-semibold text-sm transition-colors">Go Back</button>
+                <button type="button" onclick="confirmBulkBook()" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-semibold text-sm transition-colors">Yes, Book Shipments</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Action Bar -->
+    <div id="bulkActionBar" class="fixed bottom-0 left-0 right-0 md:left-64 bg-white border-t border-gray-200 shadow-[0_-10px_15px_-3px_rgba(0,0,0,0.08)] p-3 md:p-4 z-50 transform translate-y-full transition-transform duration-300">
+        <!-- Desktop Layout -->
+        <div class="hidden md:flex items-center justify-between w-full">
+            <div class="flex items-center gap-4">
+                <span class="bg-brand-orange text-white font-bold px-3 py-1 rounded-full text-sm"><span id="selectedCount">0</span> Selected</span>
+                <span class="text-sm text-gray-500 font-medium">Bulk Actions:</span>
+            </div>
+            
+            <form method="POST" id="bulkForm" class="flex items-center gap-3">
+                <input type="hidden" name="action" id="bulkActionType" value="" />
+                <input type="hidden" name="order_ids" id="bulkOrderIds" value="" />
+                
+                <button type="button" onclick="openBulkBookModal()" class="flex items-center gap-1.5 text-sm font-semibold text-indigo-700 hover:text-indigo-800 transition-colors bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-md border border-indigo-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                    Book Shipments
+                </button>
+                
+                <button type="button" onclick="printSelectedInvoices()" class="flex items-center gap-1.5 text-sm font-semibold text-emerald-700 hover:text-emerald-800 transition-colors bg-emerald-50 hover:bg-emerald-100 px-3 py-2 rounded-md border border-emerald-200" title="Print 6-per-page A4 Landscape Shipping Labels">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                    Print Shipping Labels
+                </button>
+
+                <div class="w-px h-6 bg-gray-200 mx-2"></div>
+
+                <select name="new_status" class="text-sm border-gray-300 rounded-md focus:ring-brand-orange focus:border-brand-orange py-2 pl-3 pr-8 appearance-none" style="background-position: right 0.4rem center; background-size: 1rem 1rem;">
+                    <option value="" disabled selected>Update Status...</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Confirmed">Confirmed</option>
+                    <option value="Booked">Booked</option>
+                    <option value="Shipped">Shipped</option>
+                    <option value="Out for Delivery">Out for Delivery</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Returned">Returned</option>
+                    <option value="Cancelled">Cancelled</option>
+                </select>
+                <button type="button" onclick="submitBulk('bulk_update_status')" class="bg-gray-900 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-black transition-colors">Apply</button>
+                <div class="w-px h-6 bg-gray-200 mx-2"></div>
+                <button type="button" onclick="openBulkDeleteModal()" class="flex items-center gap-1.5 text-sm font-semibold text-rose-600 hover:text-rose-700 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    Delete
+                </button>
+            </form>
+        </div>
+
+        <!-- Mobile Responsive Layout -->
+        <div class="flex md:hidden items-center justify-between w-full">
+            <div class="flex items-center gap-2">
+                <span class="bg-brand-orange text-white font-bold px-2.5 py-1 rounded-full text-xs">
+                    <span class="mobileSelectedCount">0</span> Selected
+                </span>
+                <button type="button" onclick="clearAllSelections()" class="text-xs text-gray-500 hover:text-gray-800 underline font-medium px-1">
+                    Clear
+                </button>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="openMobileBulkModal()" class="bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow hover:bg-black transition-colors">
+                    <span>Bulk Actions</span>
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Bulk Action Bottom Sheet Modal -->
+    <div id="mobileBulkModal" class="fixed inset-0 bg-black/60 z-50 hidden transition-opacity flex flex-col justify-end md:hidden" onclick="if(event.target === this) closeMobileBulkModal()">
+        <div class="bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto shadow-2xl p-5 space-y-4 animate-in slide-in-from-bottom duration-200">
+            <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                <div>
+                    <h3 class="font-extrabold text-gray-900 text-base">Bulk Actions</h3>
+                    <p class="text-xs text-gray-500 font-medium"><span class="mobileModalCount">0</span> orders selected</p>
+                </div>
+                <button type="button" onclick="closeMobileBulkModal()" class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Quick Action Grid -->
+            <div class="grid grid-cols-2 gap-2.5">
+                <button type="button" onclick="handleMobileBulkAction('book')" class="flex flex-col items-center justify-center p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-indigo-800 hover:bg-indigo-100 transition-colors">
+                    <svg class="w-5 h-5 mb-1 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>
+                    <span class="text-xs font-bold">Book Shipments</span>
+                </button>
+                <button type="button" onclick="handleMobileBulkAction('print')" class="flex flex-col items-center justify-center p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 hover:bg-emerald-100 transition-colors">
+                    <svg class="w-5 h-5 mb-1 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+                    <span class="text-xs font-bold">Print Shipping Labels</span>
+                </button>
+            </div>
+
+            <!-- Status Update Section -->
+            <div class="bg-gray-50 p-3.5 rounded-xl border border-gray-200 space-y-2.5">
+                <label class="block text-xs font-bold text-gray-700">Update Status To:</label>
+                <div class="flex gap-2">
+                    <select id="mobileStatusSelect" class="flex-1 text-xs border-gray-300 rounded-lg focus:ring-brand-orange focus:border-brand-orange py-2 px-2.5 bg-white">
+                        <option value="" disabled selected>Select status...</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Confirmed">Confirmed</option>
+                        <option value="Booked">Booked</option>
+                        <option value="Shipped">Shipped</option>
+                        <option value="Out for Delivery">Out for Delivery</option>
+                        <option value="Delivered">Delivered</option>
+                        <option value="Returned">Returned</option>
+                        <option value="Cancelled">Cancelled</option>
+                    </select>
+                    <button type="button" onclick="handleMobileStatusApply()" class="bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-black transition-colors shrink-0">
+                        Apply
+                    </button>
+                </div>
+            </div>
+
+            <!-- Danger Zone & Clear -->
+            <div class="pt-2 flex items-center justify-between border-t border-gray-100 gap-3">
+                <button type="button" onclick="clearAllSelections(); closeMobileBulkModal();" class="text-xs text-gray-500 hover:text-gray-800 font-medium py-2 px-3 rounded-lg border border-gray-200 hover:bg-gray-50">
+                    Deselect All
+                </button>
+                <button type="button" onclick="handleMobileBulkAction('delete')" class="text-xs text-rose-600 hover:text-rose-700 font-bold py-2 px-3 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    <span>Delete Selected</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script is:inline define:vars={{ availableProducts, cachedCities, defaultDeliveryFee: courierSettings?.delivery_charges ?? 200, freeShippingThreshold: courierSettings?.free_shipping_threshold ?? 2000 }}>
+        // --- Manual Booking Items & City Search Engine ---
+        let bookingItems = [];
+
+        function initDefaultBookingItem() {
+            bookingItems = [];
+            if (availableProducts && availableProducts.length > 0) {
+                const firstProd = availableProducts[0];
+                const firstPack = firstProd.packs && firstProd.packs.length > 0 ? firstProd.packs[0] : null;
+                bookingItems.push({
+                    productId: firstProd.id,
+                    productName: firstProd.title,
+                    packId: firstPack ? firstPack.id : 0,
+                    packLabel: firstPack ? firstPack.label : '1 Unit (Single)',
+                    unitPrice: firstPack ? firstPack.price : firstProd.base_price,
+                    quantity: 1,
+                    freeShipping: firstPack ? firstPack.free_shipping : false
+                });
+            }
+            renderBookingItems();
+        }
+
+        function renderBookingItems() {
+            const container = document.getElementById('bookingItemsList');
+            if (!container) return;
+
+            container.innerHTML = '';
+            if (bookingItems.length === 0) {
+                container.innerHTML = `<div class="p-3 text-center text-xs text-gray-400 bg-white rounded-lg border border-dashed border-gray-200">No items added. Click "+ Add Product Item" above.</div>`;
+                updateBookingCalculations();
+                return;
+            }
+
+            bookingItems.forEach((item, index) => {
+                const currentProduct = availableProducts.find(p => p.id === item.productId) || availableProducts[0] || { packs: [] };
+                const packs = currentProduct.packs || [];
+
+                const itemRow = document.createElement('div');
+                itemRow.className = 'bg-white p-3 rounded-xl border border-gray-200 shadow-2xs space-y-2';
+                
+                let productOptionsHtml = availableProducts.map(p => `
+                    <option value="${p.id}" ${p.id === item.productId ? 'selected' : ''}>${p.title}</option>
+                `).join('');
+
+                let packOptionsHtml = `
+                    <option value="0" ${item.packId === 0 ? 'selected' : ''}>Standard Single (Rs. ${currentProduct.base_price})</option>
+                `;
+                packs.forEach(pk => {
+                    packOptionsHtml += `
+                        <option value="${pk.id}" ${pk.id === item.packId ? 'selected' : ''}>${pk.label} (Rs. ${pk.price.toLocaleString()})</option>
+                    `;
+                });
+
+                itemRow.innerHTML = `
+                    <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                        <div class="sm:col-span-5">
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Product</label>
+                            <select class="item-prod-select w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs font-semibold focus:ring-brand-orange focus:border-brand-orange" data-index="${index}">
+                                ${productOptionsHtml}
+                            </select>
+                        </div>
+                        <div class="sm:col-span-4">
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Bundle / Pack Variation</label>
+                            <select class="item-pack-select w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-brand-orange focus:border-brand-orange" data-index="${index}">
+                                ${packOptionsHtml}
+                            </select>
+                        </div>
+                        <div class="sm:col-span-2">
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-0.5">Qty</label>
+                            <input type="number" min="1" max="99" value="${item.quantity}" class="item-qty-input w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-xs font-mono font-bold text-center focus:ring-brand-orange focus:border-brand-orange" data-index="${index}" />
+                        </div>
+                        <div class="sm:col-span-1 flex items-center justify-end pt-3 sm:pt-0">
+                            <button type="button" class="item-remove-btn p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors" data-index="${index}" title="Remove Item">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between text-[11px] text-gray-500 pt-1 border-t border-gray-100">
+                        <span>Unit Price: <strong class="text-gray-900 font-mono">PKR ${(item.unitPrice || 0).toLocaleString()}</strong></span>
+                        <span>Item Total: <strong class="text-brand-orange font-mono font-bold">PKR ${((item.unitPrice || 0) * item.quantity).toLocaleString()}</strong></span>
+                    </div>
+                `;
+
+                container.appendChild(itemRow);
+            });
+
+            // Bind Row Events
+            container.querySelectorAll('.item-prod-select').forEach(sel => {
+                sel.addEventListener('change', (e) => {
+                    const idx = parseInt(e.target.getAttribute('data-index'), 10);
+                    const newProdId = parseInt(e.target.value, 10);
+                    const prod = availableProducts.find(p => p.id === newProdId);
+                    if (prod) {
+                        bookingItems[idx].productId = prod.id;
+                        bookingItems[idx].productName = prod.title;
+                        const firstPack = prod.packs && prod.packs.length > 0 ? prod.packs[0] : null;
+                        if (firstPack) {
+                            bookingItems[idx].packId = firstPack.id;
+                            bookingItems[idx].packLabel = firstPack.label;
+                            bookingItems[idx].unitPrice = firstPack.price;
+                            bookingItems[idx].freeShipping = firstPack.free_shipping;
+                        } else {
+                            bookingItems[idx].packId = 0;
+                            bookingItems[idx].packLabel = '1 Unit (Single)';
+                            bookingItems[idx].unitPrice = prod.base_price;
+                            bookingItems[idx].freeShipping = false;
+                        }
+                        renderBookingItems();
+                    }
+                });
+            });
+
+            container.querySelectorAll('.item-pack-select').forEach(sel => {
+                sel.addEventListener('change', (e) => {
+                    const idx = parseInt(e.target.getAttribute('data-index'), 10);
+                    const packId = parseInt(e.target.value, 10);
+                    const prod = availableProducts.find(p => p.id === bookingItems[idx].productId);
+                    if (packId === 0) {
+                        bookingItems[idx].packId = 0;
+                        bookingItems[idx].packLabel = '1 Unit (Single)';
+                        bookingItems[idx].unitPrice = prod ? prod.base_price : 700;
+                        bookingItems[idx].freeShipping = false;
+                    } else {
+                        const pack = prod?.packs?.find(pk => pk.id === packId);
+                        if (pack) {
+                            bookingItems[idx].packId = pack.id;
+                            bookingItems[idx].packLabel = pack.label;
+                            bookingItems[idx].unitPrice = pack.price;
+                            bookingItems[idx].freeShipping = pack.free_shipping;
+                        }
+                    }
+                    renderBookingItems();
+                });
+            });
+
+            container.querySelectorAll('.item-qty-input').forEach(inp => {
+                inp.addEventListener('input', (e) => {
+                    const idx = parseInt(e.target.getAttribute('data-index'), 10);
+                    const val = Math.max(1, parseInt(e.target.value || '1', 10));
+                    bookingItems[idx].quantity = val;
+                    updateBookingCalculations();
+                });
+            });
+
+            container.querySelectorAll('.item-remove-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(btn.getAttribute('data-index'), 10);
+                    bookingItems.splice(idx, 1);
+                    renderBookingItems();
+                });
+            });
+
+            updateBookingCalculations();
+        }
+
+        function updateBookingCalculations() {
+            const subtotal = bookingItems.reduce((sum, item) => sum + ((item.unitPrice || 0) * (item.quantity || 1)), 0);
+            
+            const subtotalDisplay = document.getElementById('bookingSubtotalDisplay');
+            if (subtotalDisplay) subtotalDisplay.textContent = `PKR ${subtotal.toLocaleString()}`;
+
+            const deliveryFeeInp = document.getElementById('book_delivery_fee');
+            const totalAmountInp = document.getElementById('book_total_amount');
+            const itemsJsonInp = document.getElementById('book_items_json');
+            const summaryInp = document.getElementById('book_order_summary');
+
+            // Free shipping check
+            const hasFreeShippingPack = bookingItems.some(i => i.freeShipping);
+            const isEligibleFree = hasFreeShippingPack || (subtotal >= freeShippingThreshold);
+            
+            let deliveryFee = defaultDeliveryFee;
+            if (isEligibleFree) {
+                deliveryFee = 0;
+            }
+
+            if (deliveryFeeInp) {
+                // If the user hasn't explicitly overridden delivery fee manually
+                deliveryFeeInp.value = deliveryFee;
+            }
+
+            const currentDelFee = parseFloat(deliveryFeeInp?.value || '0');
+            const total = subtotal + currentDelFee;
+
+            if (totalAmountInp) {
+                totalAmountInp.value = total;
+            }
+
+            if (itemsJsonInp) {
+                itemsJsonInp.value = JSON.stringify(bookingItems);
+            }
+
+            if (summaryInp && bookingItems.length > 0) {
+                summaryInp.value = bookingItems.map(i => `${i.productName} (${i.packLabel}) x${i.quantity}`).join(", ");
+            }
+        }
+
+        // City Search Autocomplete Setup
+        function setupCityDropdown() {
+            const cityInput = document.getElementById('book_city_input');
+            const cityHidden = document.getElementById('book_customer_city');
+            const cityDropdown = document.getElementById('book_city_dropdown');
+            const cityList = document.getElementById('book_city_list');
+            const noResults = document.getElementById('book_city_no_results');
+
+            if (!cityInput || !cityDropdown || !cityList) return;
+
+            cityInput.addEventListener('focus', () => {
+                cityDropdown.classList.remove('hidden');
+                filterCities(cityInput.value.trim());
+            });
+
+            cityInput.addEventListener('input', (e) => {
+                const q = e.target.value.trim().toLowerCase();
+                cityHidden.value = e.target.value.trim();
+                cityDropdown.classList.remove('hidden');
+                filterCities(q);
+            });
+
+            function filterCities(query) {
+                let matchCount = 0;
+                const items = cityList.querySelectorAll('.book-city-item');
+                items.forEach(item => {
+                    const cityName = (item.getAttribute('data-city') || '').toLowerCase();
+                    if (!query || cityName.includes(query)) {
+                        item.classList.remove('hidden');
+                        matchCount++;
+                    } else {
+                        item.classList.add('hidden');
+                    }
+                });
+
+                if (matchCount === 0 && query) {
+                    if (noResults) noResults.classList.remove('hidden');
+                } else {
+                    if (noResults) noResults.classList.add('hidden');
+                }
+            }
+
+            cityList.addEventListener('click', (e) => {
+                const target = e.target.closest('.book-city-item');
+                if (target) {
+                    const chosenCity = target.getAttribute('data-city');
+                    cityInput.value = chosenCity;
+                    cityHidden.value = chosenCity;
+                    cityDropdown.classList.add('hidden');
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                const container = document.getElementById('book_city_container');
+                if (container && !container.contains(e.target)) {
+                    cityDropdown.classList.add('hidden');
+                }
+            });
+        }
+
+        window.openCreateBookingModal = function() {
+            const modal = document.getElementById('createBookingModal');
+            const dateInput = document.getElementById('createBookingDate');
+            
+            // Set current date in PKT format for datetime-local
+            const now = new Date();
+            const pktOffset = 5 * 60 * 60 * 1000;
+            const pktTime = new Date(now.getTime() + pktOffset);
+            
+            // Format to YYYY-MM-DDThh:mm
+            const formatted = pktTime.toISOString().slice(0, 16);
+            if (dateInput) dateInput.value = formatted;
+            
+            initDefaultBookingItem();
+            if (modal) modal.classList.remove('hidden');
+        };
+
+        window.closeCreateBookingModal = function() {
+            const modal = document.getElementById('createBookingModal');
+            if (modal) modal.classList.add('hidden');
+        };
+
+        // Customer Search Autocomplete Logic
+        const searchInput = document.getElementById('customerSearchInput');
+        const searchResults = document.getElementById('customerSearchResults');
+        
+        let searchTimeout;
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+                
+                if (query.length < 2) {
+                    searchResults.classList.add('hidden');
+                    return;
+                }
+                
+                searchTimeout = setTimeout(async () => {
+                    try {
+                        const res = await fetch(`/api/admin/customer-search?q=${encodeURIComponent(query)}`);
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        
+                        searchResults.innerHTML = '';
+                        if (data.length > 0) {
+                            data.forEach(customer => {
+                                const div = document.createElement('div');
+                                div.className = 'px-4 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0';
+                                div.innerHTML = `
+                                    <div class="font-medium text-gray-900">${customer.name}</div>
+                                    <div class="text-xs text-gray-500">${customer.phone} • ${customer.city}</div>
+                                `;
+                                div.addEventListener('click', () => {
+                                    document.getElementById('book_customer_name').value = customer.name || '';
+                                    document.getElementById('book_customer_phone').value = customer.phone || '';
+                                    document.getElementById('book_customer_email').value = customer.email || '';
+                                    
+                                    const cityInp = document.getElementById('book_city_input');
+                                    const cityHid = document.getElementById('book_customer_city');
+                                    if (cityInp && cityHid) {
+                                        cityInp.value = customer.city || '';
+                                        cityHid.value = customer.city || '';
+                                    }
+
+                                    document.getElementById('book_customer_address').value = customer.address || '';
+                                    
+                                    searchInput.value = '';
+                                    searchResults.classList.add('hidden');
+                                });
+                                searchResults.appendChild(div);
+                            });
+                            searchResults.classList.remove('hidden');
+                        } else {
+                            searchResults.innerHTML = '<div class="px-4 py-3 text-sm text-gray-500 text-center">No customers found</div>';
+                            searchResults.classList.remove('hidden');
+                        }
+                    } catch(err) {
+                        console.error("Search failed", err);
+                    }
+                }, 300);
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                    searchResults.classList.add('hidden');
+                }
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setupCityDropdown();
+
+            const openBtn = document.getElementById('openCreateBookingBtn');
+            if (openBtn) {
+                openBtn.addEventListener('click', window.openCreateBookingModal);
+            }
+
+            const addBtn = document.getElementById('addBookingItemBtn');
+            if (addBtn) {
+                addBtn.addEventListener('click', () => {
+                    if (availableProducts && availableProducts.length > 0) {
+                        const prod = availableProducts[0];
+                        const pack = prod.packs && prod.packs.length > 0 ? prod.packs[0] : null;
+                        bookingItems.push({
+                            productId: prod.id,
+                            productName: prod.title,
+                            packId: pack ? pack.id : 0,
+                            packLabel: pack ? pack.label : '1 Unit (Single)',
+                            unitPrice: pack ? pack.price : prod.base_price,
+                            quantity: 1,
+                            freeShipping: pack ? pack.free_shipping : false
+                        });
+                        renderBookingItems();
+                    }
+                });
+            }
+
+            const delFeeInp = document.getElementById('book_delivery_fee');
+            if (delFeeInp) {
+                delFeeInp.addEventListener('input', () => {
+                    const subtotal = bookingItems.reduce((sum, item) => sum + ((item.unitPrice || 0) * (item.quantity || 1)), 0);
+                    const del = parseFloat(delFeeInp.value || '0');
+                    const totalInp = document.getElementById('book_total_amount');
+                    if (totalInp) totalInp.value = subtotal + del;
+                });
+            }
+
+            const selectAll = document.getElementById('selectAll');
+            const rowCheckboxes = document.querySelectorAll('.row-checkbox');
+            const bulkActionBar = document.getElementById('bulkActionBar');
+            const selectedCount = document.getElementById('selectedCount');
+            const bulkOrderIds = document.getElementById('bulkOrderIds');
+            const bulkActionType = document.getElementById('bulkActionType');
+            const bulkForm = document.getElementById('bulkForm');
+            const periodSelect = document.getElementById('period-select');
+            const customDateInputs = document.getElementById('custom-date-inputs');
+
+            if (periodSelect && customDateInputs) {
+                periodSelect.addEventListener('change', (e) => {
+                    if (e.target.value === 'custom') {
+                        customDateInputs.classList.remove('hidden');
+                        customDateInputs.classList.add('flex');
+                        customDateInputs.querySelectorAll('input').forEach(i => i.required = true);
+                    } else {
+                        customDateInputs.classList.add('hidden');
+                        customDateInputs.classList.remove('flex');
+                        customDateInputs.querySelectorAll('input').forEach(i => i.required = false);
+                        e.target.form.submit();
+                    }
+                });
+            }
+
+            function updateBulkActionUI() {
+                const selected = Array.from(rowCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+                if (selected.length > 0) {
+                    bulkActionBar.classList.remove('translate-y-full');
+                    bulkActionBar.classList.add('translate-y-0');
+                    if (selectedCount) selectedCount.textContent = selected.length;
+                    document.querySelectorAll('.mobileSelectedCount').forEach(el => el.textContent = selected.length);
+                    document.querySelectorAll('.mobileModalCount').forEach(el => el.textContent = selected.length);
+                    bulkOrderIds.value = selected.join(',');
+                } else {
+                    bulkActionBar.classList.add('translate-y-full');
+                    bulkActionBar.classList.remove('translate-y-0');
+                    closeMobileBulkModal();
+                }
+                
+                if (selectAll && rowCheckboxes.length > 0) {
+                    selectAll.checked = selected.length === rowCheckboxes.length;
+                }
+            }
+
+            if (selectAll) {
+                selectAll.addEventListener('change', (e) => {
+                    rowCheckboxes.forEach(cb => cb.checked = e.target.checked);
+                    updateBulkActionUI();
+                });
+            }
+
+            rowCheckboxes.forEach(cb => {
+                cb.addEventListener('change', updateBulkActionUI);
+            });
+
+            window.clearAllSelections = function() {
+                rowCheckboxes.forEach(cb => cb.checked = false);
+                if (selectAll) selectAll.checked = false;
+                updateBulkActionUI();
+            };
+
+            window.openMobileBulkModal = function() {
+                const modal = document.getElementById('mobileBulkModal');
+                if (modal) modal.classList.remove('hidden');
+            };
+
+            window.closeMobileBulkModal = function() {
+                const modal = document.getElementById('mobileBulkModal');
+                if (modal) modal.classList.add('hidden');
+            };
+
+            window.handleMobileBulkAction = function(action) {
+                closeMobileBulkModal();
+                if (action === 'book') openBulkBookModal();
+                else if (action === 'print') printSelectedInvoices();
+                else if (action === 'delete') openBulkDeleteModal();
+            };
+
+            window.handleMobileStatusApply = function() {
+                const mobileSelect = document.getElementById('mobileStatusSelect');
+                if (!mobileSelect || !mobileSelect.value) {
+                    alert('Please select a status to apply.');
+                    return;
+                }
+                const desktopSelect = bulkForm.querySelector('select[name="new_status"]');
+                if (desktopSelect) desktopSelect.value = mobileSelect.value;
+                closeMobileBulkModal();
+                submitBulk('bulk_update_status');
+            };
+
+            window.openCancelModal = function(orderId) {
+                document.getElementById('cancelLabelOrderId').value = orderId;
+                document.getElementById('cancelLabelModal').classList.remove('hidden');
+            }
+
+            window.closeCancelModal = function() {
+                document.getElementById('cancelLabelModal').classList.add('hidden');
+            }
+
+            window.openDeleteModal = function(orderId) {
+                document.getElementById('deleteOrderId').value = orderId;
+                document.getElementById('deleteOrderModal').classList.remove('hidden');
+            }
+
+            window.closeDeleteModal = function() {
+                document.getElementById('deleteOrderModal').classList.add('hidden');
+            }
+
+            window.openBulkDeleteModal = function() {
+                document.getElementById('bulkDeleteModal').classList.remove('hidden');
+            }
+
+            window.closeBulkDeleteModal = function() {
+                document.getElementById('bulkDeleteModal').classList.add('hidden');
+            }
+
+            window.confirmBulkDelete = function() {
+                document.getElementById('bulkActionType').value = 'bulk_delete';
+                document.getElementById('bulkForm').submit();
+            }
+
+            window.printSelectedInvoices = function() {
+                const checkedBoxes = Array.from(document.querySelectorAll('.row-checkbox:checked'));
+                if (checkedBoxes.length === 0) {
+                    alert('Please select at least one order to print.');
+                    return;
+                }
+                const orderIds = checkedBoxes.map(cb => cb.value).filter(Boolean);
+                const courierIds = checkedBoxes.map(cb => (cb.getAttribute('data-courier-id') || '').trim()).filter(Boolean);
+
+                // If all selected orders have RS Courier booking IDs, open RS Courier official bulk print URL directly!
+                if (courierIds.length === checkedBoxes.length && courierIds.length > 0) {
+                    const rsUrl = `https://portal.rscourier.pk/invoicehtml.php?order_id=${courierIds.join('%2C')}&save_print=&print=1`;
+                    window.open(rsUrl, '_blank');
+                } else {
+                    window.open('/admin/print-invoices/?ids=' + orderIds.join(','), '_blank');
+                }
+            }
+
+            window.openBulkBookModal = function() {
+                document.getElementById('bulkBookModal').classList.remove('hidden');
+            }
+
+            window.closeBulkBookModal = function() {
+                document.getElementById('bulkBookModal').classList.add('hidden');
+            }
+
+            window.confirmBulkBook = function() {
+                document.getElementById('bulkActionType').value = 'bulk_book_shipments';
+                document.getElementById('bulkForm').submit();
+            }
+
+            window.submitBulk = function(actionType) {
+                bulkActionType.value = actionType;
+                
+                if (actionType === 'bulk_update_status') {
+                    const selectEl = bulkForm.querySelector('select[name="new_status"]');
+                    if (!selectEl.value) {
+                        alert('Please select a status to apply.');
+                        return;
+                    }
+                }
+                
+                bulkForm.submit();
+            }
+        });
+    </script>
+</AdminLayout>
+

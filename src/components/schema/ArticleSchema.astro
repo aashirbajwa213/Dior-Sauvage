@@ -1,0 +1,43 @@
+---
+interface Props {
+    data: {
+        title: string;
+        description: string;
+        publishDate?: string;
+        updatedDate?: string;
+        image?: string;
+        author?: string;
+        category?: string;
+    };
+}
+
+const { data } = Astro.props;
+
+const articleSchema = {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: data.title,
+    description: data.description,
+    image: data.image ? `https://sauvagedior.pk${data.image}` : undefined,
+    datePublished: data.publishDate,
+    dateModified: data.updatedDate || data.publishDate,
+    author: {
+        "@type": "Organization",
+        name: "Dior Sauvage Pakistan",
+    },
+    publisher: {
+        "@type": "Organization",
+        name: "Dior Sauvage Pakistan",
+        logo: {
+            "@type": "ImageObject",
+            url: "https://sauvagedior.pk/logo.png",
+        },
+    },
+    mainEntityOfPage: {
+        "@type": "WebPage",
+        "@id": Astro.url.href,
+    },
+};
+---
+
+<script type="application/ld+json" set:html={JSON.stringify(articleSchema)} />

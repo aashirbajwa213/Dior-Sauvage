@@ -1,0 +1,89 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import PageHeader from "../components/PageHeader.astro";
+
+const seoTitle = "Terms and Conditions | Dior Sauvage Pakistan";
+const seoDescription =
+    "Read the Terms and Conditions for Dior Sauvage Pakistan. Understand our policies on ordering, shipping, checking warranties, and authentic luxury fragrances.";
+---
+
+<MainLayout title={seoTitle} description={seoDescription} schemaType="policy">
+    <PageHeader
+        title="Terms and Conditions"
+        tagline="Please read these terms carefully before using our services."
+    />
+
+    <div class="container mx-auto px-4 max-w-4xl py-16">
+        <div class="space-y-10 text-gray-600">
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    1. Introduction
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    Welcome to Dior Sauvage Pakistan. By accessing our website and
+                    placing an order, you agree to be bound by the following
+                    terms and conditions.
+                </p>
+            </section>
+
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    2. Ordering and Payment
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    All orders are subject to availability and confirmation of
+                    the order price. We offer Cash on Delivery (COD) and various
+                    online payment methods.
+                </p>
+            </section>
+
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    3. Shipping and Delivery
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    We aim to dispatch all orders within 24 hours. Delivery
+                    times may vary depending on the courier service and
+                    destination. Standard delivery takes 2-4 working days.
+                </p>
+            </section>
+
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    4. Warranty and Returns
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    We offer a "Check Warranty" policy. Please inspect your
+                    product upon arrival. For detailed warranty and return
+                    information, please visit our <a
+                        href="/refund-return-policy/"
+                        class="text-brand-orange hover:underline font-medium"
+                        >Return Policy page</a
+                    >.
+                </p>
+            </section>
+
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    5. Intellectual Property
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    All content on this website, including text, graphics,
+                    logos, and images, is the property of Gionee Pakistan or its
+                    content suppliers and is protected by copyright laws.
+                </p>
+            </section>
+
+            <section>
+                <h3 class="text-2xl font-bold text-gray-900 mb-4">
+                    6. Changes to Terms
+                </h3>
+                <p class="leading-relaxed text-lg">
+                    We reserve the right to modify these terms at any time.
+                    Changes will be effective immediately upon posting on the
+                    website.
+                </p>
+            </section>
+        </div>
+    </div>
+</MainLayout>

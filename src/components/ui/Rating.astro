@@ -1,0 +1,47 @@
+---
+interface Props {
+    rating: number; // 0 to 5
+    count?: number;
+    size?: "sm" | "md";
+}
+
+const { rating, count, size = "sm" } = Astro.props;
+
+const sizeClass = size === "sm" ? "w-4 h-4" : "w-5 h-5";
+
+// Generate array [1, 2, 3, 4, 5]
+const stars = Array.from({ length: 5 }, (_, i) => i + 1);
+---
+
+<div class="flex items-center gap-1">
+    <div class="flex items-center text-yellow-400">
+        {
+            stars.map((star) => (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill={rating >= star ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class={sizeClass}
+                >
+                    <polygon
+                        points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+                        class={
+                            rating >= star
+                                ? "fill-current"
+                                : "fill-transparent stroke-gray-300 text-gray-300"
+                        }
+                    />
+                </svg>
+            ))
+        }
+    </div>
+    {
+        count !== undefined && (
+            <span class="text-xs text-gray-500 ml-1">({count})</span>
+        )
+    }
+</div>

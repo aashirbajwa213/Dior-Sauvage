@@ -1,0 +1,121 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import PageHeader from "../components/PageHeader.astro";
+import Icon from "../components/ui/Icon.astro";
+import Button from "../components/ui/Button.astro";
+import { getAllSettings } from "../utils/settings";
+
+const seoTitle = "Refund and Return Policy | Dior Sauvage Pakistan";
+const seoDescription =
+    "Our authentic luxury perfume refund and return policy. Learn about our Open Parcel Checking Warranty and 7-day replacement guarantee.";
+
+const db = Astro.locals.runtime?.env?.DB;
+let whatsappNumber = "923112390620";
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        if (settings.public_whatsapp_number) {
+            whatsappNumber = settings.public_whatsapp_number;
+        }
+    } catch(e) {}
+}
+const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.substring(2, 5)} ${whatsappNumber.substring(5)}`;
+---
+
+<MainLayout title={seoTitle} description={seoDescription} schemaType="policy">
+    <PageHeader
+        title="Refund & Returns Policy"
+        tagline="100% Transparency and Customer Security for Luxury Fragrance Purchases."
+    />
+
+    <div class="container mx-auto px-4 max-w-4xl py-16">
+        <div
+            class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 md:p-12 space-y-12"
+        >
+            {/* Introduction */}
+            <div>
+                <div
+                    class="bg-blue-50 border-l-4 border-blue-500 p-6 rounded-r-lg mb-8"
+                >
+                    <div class="flex items-start gap-3">
+                        <Icon
+                            name="check"
+                            class="w-6 h-6 text-blue-500 shrink-0 mt-1"
+                        />
+                        <div>
+                            <h3 class="font-bold text-gray-900 mb-1">
+                                Strict Quality Assurance Before Dispatch
+                            </h3>
+                            <p class="text-gray-700 text-sm">
+                                Every single fragrance shipment is inspected by our fulfillment team prior to sealing. We specifically check:
+                            </p>
+                            <ul
+                                class="list-disc list-inside mt-2 text-sm text-gray-600"
+                            >
+                                <li>
+                                    <strong>Cellophane & Seals:</strong> Intact factory cellophane wrapping with crisp fold seams.
+                                </li>
+                                <li>
+                                    <strong>Batch Code Alignment:</strong> Crisp 4-digit code stamped clearly on the outer box.
+                                </li>
+                                <li>
+                                    <strong>Bubble Armor Packaging:</strong> Multi-layer shock-absorbent cushioning to protect the glass bottle in transit.
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <h2 class="text-2xl font-bold text-gray-900 mb-4">
+                    1. Open Parcel Checking Warranty (Test on Arrival)
+                </h2>
+                <div class="prose prose-slate max-w-none text-gray-600">
+                    <p>
+                        At SauvageDior.pk, we believe our customers deserve complete confidence when investing in a signature luxury fragrance. We provide an <strong
+                            >Open Parcel Checking Warranty</strong
+                        > with Cash on Delivery.
+                    </p>
+                    <p>
+                        <strong>What this means:</strong> You are encouraged to inspect the outer package and verify the product condition with the courier rider upon delivery.
+                    </p>
+                    <ul
+                        class="list-disc list-inside bg-slate-50 p-6 rounded-lg border border-slate-200 my-6"
+                    >
+                        <li class="mb-2">
+                            <strong>Transit Protection:</strong> In the rare event of transit breakage or leakage, you can refuse the parcel immediately and request a priority replacement.
+                        </li>
+                        <li>
+                            <strong>Authenticity Assurance:</strong> You can cross-verify the printed batch code on CheckFresh.com to confirm production authenticity.
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <hr class="border-gray-100" />
+
+            {/* 7-Day Exchange Policy */}
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900 mb-4">
+                    2. 7-Day Replacement & Return Window
+                </h2>
+                <p class="text-gray-600 mb-4">
+                    If you identify any manufacturing defect with the atomizer nozzle or package discrepancy within 7 days of delivery:
+                </p>
+                <div class="grid sm:grid-cols-2 gap-4 my-6">
+                    <div class="border border-gray-200 p-4 rounded-xl">
+                        <div class="font-bold text-gray-900 mb-1">Step 1: Contact WhatsApp</div>
+                        <p class="text-sm text-gray-600">Message our customer team at {formattedWhatsapp} with your Order ID and photo of the issue.</p>
+                    </div>
+                    <div class="border border-gray-200 p-4 rounded-xl">
+                        <div class="font-bold text-gray-900 mb-1">Step 2: Instant Replacement</div>
+                        <p class="text-sm text-gray-600">We dispatch a fresh replacement unit within 24 hours via express courier.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-6 border-t border-gray-100 text-center">
+                <Button href="/contact/" size="lg">Contact Fragrance Support</Button>
+            </div>
+        </div>
+    </div>
+</MainLayout>

@@ -1,0 +1,123 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import PageHeader from "../components/PageHeader.astro";
+import Icon from "../components/ui/Icon.astro";
+import Button from "../components/ui/Button.astro";
+
+const seoTitle = "About Us | Authentic Dior Sauvage Fragrances Pakistan";
+const seoDescription =
+    "We are Pakistan's dedicated luxury fragrance distributor for 100% original Christian Dior Sauvage. Guaranteed batch code authenticity, Cash on Delivery and check warranty.";
+---
+
+<MainLayout title={seoTitle} description={seoDescription} schemaType="about">
+    <PageHeader
+        title="About Dior Sauvage Pakistan"
+        tagline="The Trusted Source for 100% Authentic Luxury Perfumes."
+    />
+
+    <div class="container mx-auto px-4 max-w-5xl py-16">
+        <div class="grid md:grid-cols-2 gap-12 items-center mb-20">
+            <div class="space-y-6">
+                <h2 class="text-3xl font-bold text-gray-900">
+                    Curating Premium Brand Leftover Lots in Pakistan
+                </h2>
+                <div class="prose prose-slate text-gray-600 leading-relaxed">
+                    <p>
+                        Dior Sauvage Pakistan was established with a clear, transparent mission:
+                        to provide fragrance connoisseurs in Pakistan with access to authentic <strong
+                            >Brand Leftover Stock Lots of Christian Dior Sauvage Eau de Parfum (100ml)</strong
+                        > at fair, accessible pricing without commercial showroom markups.
+                    </p>
+                    <p>
+                        We believe in complete honesty. Our inventory consists of curated brand leftover stock lots that deliver the exact same 1:1 formulation, iconic Calabrian bergamot, magnetic ambroxan, and 12+ hours monster longevity. Every order is backed by an Open Parcel Check Warranty, allowing you to inspect the bottle upon delivery before payment.
+                    </p>
+                    <p>
+                        We operate fulfillment directly from Lahore and Karachi, ensuring fast 2-3 day express nationwide delivery via TCS and Leopards Courier with complete Cash on Delivery.
+                    </p>
+                </div>
+                <div class="pt-4 flex gap-4">
+                    <Button href="/dior-sauvage-100ml/">View Sauvage 100ml</Button>
+                    <Button href="/contact/" variant="outline">Contact Our Team</Button>
+                </div>
+            </div>
+            <div
+                class="bg-slate-900 text-white rounded-2xl p-8 shadow-xl relative overflow-hidden border border-slate-800"
+            >
+                <div
+                    class="absolute top-0 right-0 -m-8 text-slate-800 opacity-40 pointer-events-none"
+                >
+                    <Icon name="star" class="w-64 h-64" />
+                </div>
+                <div class="relative z-10 grid gap-6">
+                    <div class="bg-slate-800/80 p-6 rounded-xl border border-slate-700/60 transition-all hover:border-blue-500/40">
+                        <div class="flex items-center gap-3.5 mb-2">
+                            <div
+                                class="w-10 h-10 rounded-full bg-[#02274F]/80 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0 shadow-inner"
+                            >
+                                <Icon name="badge-check" class="w-5 h-5 text-blue-300" />
+                            </div>
+                            <h3 class="font-bold text-white text-base">
+                                100% Authentic Guaranteed
+                            </h3>
+                        </div>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Verifiable batch codes printed on original boxes and magnetic cap bottles.
+                        </p>
+                    </div>
+                    <div class="bg-slate-800/80 p-6 rounded-xl border border-slate-700/60 transition-all hover:border-blue-500/40">
+                        <div class="flex items-center gap-3.5 mb-2">
+                            <div
+                                class="w-10 h-10 rounded-full bg-[#02274F]/80 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0 shadow-inner"
+                            >
+                                <Icon name="package" class="w-5 h-5 text-blue-300" />
+                            </div>
+                            <h3 class="font-bold text-white text-base">
+                                Open Parcel Checking Warranty
+                            </h3>
+                        </div>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            Inspect your order upon delivery with Cash on Delivery across Pakistan.
+                        </p>
+                    </div>
+                    <div class="bg-slate-800/80 p-6 rounded-xl border border-slate-700/60 transition-all hover:border-blue-500/40">
+                        <div class="flex items-center gap-3.5 mb-2">
+                            <div
+                                class="w-10 h-10 rounded-full bg-[#02274F]/80 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0 shadow-inner"
+                            >
+                                <Icon name="zap" class="w-5 h-5 text-blue-300" />
+                            </div>
+                            <h3 class="font-bold text-white text-base">
+                                12+ Hours Monster Longevity
+                            </h3>
+                        </div>
+                        <p class="text-sm text-slate-300 leading-relaxed">
+                            High-concentration French Eau de Parfum oils that project all day and night.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* Core Values */}
+        <div class="border-t border-gray-100 pt-16">
+            <div class="text-center max-w-2xl mx-auto mb-12">
+                <h2 class="text-2xl sm:text-3xl font-bold text-gray-900">Our Promises to You</h2>
+                <p class="text-gray-500 mt-2">Setting the gold standard for online luxury shopping in Pakistan.</p>
+            </div>
+            <div class="grid sm:grid-cols-3 gap-8 text-center">
+                <div class="p-6 rounded-xl bg-slate-50 border border-slate-100">
+                    <h3 class="font-bold text-lg text-slate-900 mb-2">Batch Transparency</h3>
+                    <p class="text-sm text-slate-600">Every box has a live verifiable batch code that matches the bottle base.</p>
+                </div>
+                <div class="p-6 rounded-xl bg-slate-50 border border-slate-100">
+                    <h3 class="font-bold text-lg text-slate-900 mb-2">Safe Cash on Delivery</h3>
+                    <p class="text-sm text-slate-600">Pay only when the rider delivers your genuine package to your doorstep.</p>
+                </div>
+                <div class="p-6 rounded-xl bg-slate-50 border border-slate-100">
+                    <h3 class="font-bold text-lg text-slate-900 mb-2">Direct Customer Care</h3>
+                    <p class="text-sm text-slate-600">Active WhatsApp assistance to help you verify codes and track shipments.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</MainLayout>

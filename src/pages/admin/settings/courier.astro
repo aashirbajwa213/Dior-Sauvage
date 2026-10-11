@@ -1,0 +1,1218 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import { getAllSettings, saveMultipleSettings } from "../../../utils/settings";
+import { 
+    COURIER_PROVIDERS, 
+    resolveProviderProfile, 
+    syncCourierCities, 
+    getCachedCourierCities, 
+    getExcludedCourierCities,
+    setExcludedCourierCities,
+    testCourierBooking
+} from "../../../utils/courier";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let successMsg = "";
+let diagResult: any = null;
+
+// Fetch current settings
+let settings: any = null;
+let courierLogs: any[] = [];
+let cachedCities: string[] = [];
+let excludedCities: string[] = [];
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml.";
+} else {
+    try {
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "save_settings") {
+                const settingsToSave: Record<string, string> = {};
+
+                const defaultProvider = formData.get("courier_default_provider")?.toString().trim() || "postex";
+                settingsToSave["courier_default_provider"] = defaultProvider;
+
+                // Save configured service types for each provider
+                for (const pKey of Object.keys(COURIER_PROVIDERS)) {
+                    const pSvc = formData.get(`courier_service_${pKey}`)?.toString().trim();
+                    if (pSvc) {
+                        settingsToSave[`courier_service_${pKey}`] = pSvc;
+                    }
+                }
+
+                // Automatically align vendor, product, and service_type based on chosen provider profile
+                if (COURIER_PROVIDERS[defaultProvider]) {
+                    const profile = COURIER_PROVIDERS[defaultProvider];
+                    const chosenService = settingsToSave[`courier_service_${defaultProvider}`] || profile.serviceType;
+                    settingsToSave["courier_api_vendor"] = profile.vendorId;
+                    settingsToSave["courier_product_type"] = profile.product;
+                    settingsToSave["courier_service_type"] = chosenService;
+                } else {
+                    settingsToSave["courier_service_type"] = formData.get("courier_service_type")?.toString().trim() || "Overnight";
+                    settingsToSave["courier_product_type"] = formData.get("courier_product_type")?.toString().trim() || "Overnight";
+                    settingsToSave["courier_api_vendor"] = formData.get("courier_api_vendor")?.toString().trim() || "auto";
+                }
+
+                settingsToSave["courier_enabled"] = formData.has("courier_enabled") ? "1" : "0";
+                settingsToSave["courier_client_code"] = formData.get("courier_client_code")?.toString().trim() || "";
+                settingsToSave["courier_auth_key"] = formData.get("courier_auth_key")?.toString().trim() || "";
+                settingsToSave["courier_profile_id"] = formData.get("courier_profile_id")?.toString().trim() || "";
+                settingsToSave["courier_origin_city"] = formData.get("courier_origin_city")?.toString().trim() || "Sargodha";
+                settingsToSave["courier_default_weight"] = formData.get("courier_default_weight")?.toString().trim() || "0.5";
+                settingsToSave["courier_special_instructions"] = formData.get("courier_special_instructions")?.toString().trim() || "";
+
+                const success = await saveMultipleSettings(db, settingsToSave);
+                if (success) {
+                    successMsg = "RS Courier settings and provider profile saved successfully.";
+                } else {
+                    errorMsg = "Failed to save settings. Please try again.";
+                }
+            } else if (action === "sync_cities") {
+                const syncRes = await syncCourierCities(db);
+                if (syncRes.success) {
+                    successMsg = `Successfully synced and cached ${syncRes.count.toLocaleString()} operational cities from RS Courier!`;
+                } else {
+                    errorMsg = `Failed to sync cities: ${syncRes.error}`;
+                }
+            } else if (action === "add_excluded_city") {
+                const cityToAdd = formData.get("city_to_exclude")?.toString().trim();
+                if (cityToAdd) {
+                    const currentExcluded = await getExcludedCourierCities(db);
+                    const lower = cityToAdd.toLowerCase();
+                    if (!currentExcluded.map(c => c.toLowerCase()).includes(lower)) {
+                        currentExcluded.push(cityToAdd);
+                        await setExcludedCourierCities(db, currentExcluded);
+                        successMsg = `"${cityToAdd}" has been excluded from the checkout dropdown.`;
+                    } else {
+                        errorMsg = `"${cityToAdd}" is already in the excluded cities list.`;
+                    }
+                }
+            } else if (action === "remove_excluded_city") {
+                const cityToRemove = formData.get("city_to_restore")?.toString().trim();
+                if (cityToRemove) {
+                    const currentExcluded = await getExcludedCourierCities(db);
+                    const updated = currentExcluded.filter(c => c.toLowerCase() !== cityToRemove.toLowerCase());
+                    await setExcludedCourierCities(db, updated);
+                    successMsg = `"${cityToRemove}" has been restored to the checkout dropdown.`;
+                }
+            } else if (action === "test_booking") {
+                const testProvider = formData.get("test_provider")?.toString() || "postex";
+                const testCity = formData.get("test_city")?.toString() || "Lahore";
+                diagResult = await testCourierBooking(db, testProvider, testCity);
+                if (diagResult.success) {
+                    successMsg = `Diagnostic test succeeded for ${COURIER_PROVIDERS[testProvider]?.name || testProvider}! Generated test tracking ID ${diagResult.trackingNo} and cancelled it.`;
+                } else {
+                    errorMsg = `Diagnostic test failed: ${diagResult.error}`;
+                }
+            } else if (action === "clear_logs") {
+                try {
+                    await db.prepare(`DELETE FROM rs_courier_logs`).run();
+                    successMsg = "RS Courier logs cleared successfully.";
+                } catch (err: any) {
+                    errorMsg = "Failed to clear logs: " + err.message;
+                }
+            }
+        }
+
+        settings = await getAllSettings(db);
+        cachedCities = await getCachedCourierCities(db);
+        excludedCities = await getExcludedCourierCities(db);
+
+        // Fetch Courier API Logs
+        await db.prepare(`
+            CREATE TABLE IF NOT EXISTS rs_courier_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                order_id TEXT,
+                tracking_no TEXT,
+                payload TEXT,
+                response TEXT,
+                error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `).run();
+
+        // Keep latest 200 logs
+        await db.prepare(`
+            DELETE FROM rs_courier_logs 
+            WHERE id NOT IN (SELECT id FROM rs_courier_logs ORDER BY id DESC LIMIT 200)
+        `).run();
+
+        const logsResult = await db.prepare(`SELECT * FROM rs_courier_logs ORDER BY id DESC LIMIT 100`).all();
+        courierLogs = logsResult.results || [];
+
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+const currentProvider = settings?.courier_default_provider || "postex";
+const currentResolved = resolveProviderProfile(currentProvider, settings);
+const lastSyncedFormatted = settings?.courier_cities_last_synced 
+    ? new Date(settings.courier_cities_last_synced).toLocaleString('en-PK', { timeZone: 'Asia/Karachi', dateStyle: 'medium', timeStyle: 'short' })
+    : "Never synced";
+
+const seoTitle = "RS Courier Integration - Gionee Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="courier">
+    <div class="mb-8">
+        <h1 class="text-2xl font-bold text-gray-800 tracking-tight">RS Courier Integration</h1>
+        <p class="text-sm text-gray-500 mt-1">Multi-courier logistics management for PostEx, Leopards, Trax, M&P, and city synchronization.</p>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+            <div class="bg-red-100 text-red-700 p-1.5 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {successMsg && (
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-lg mb-8 flex items-start gap-3 shadow-sm">
+            <div class="bg-emerald-100 text-emerald-700 p-1.5 rounded-full shrink-0">
+                <Icon name="check-circle" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm text-emerald-800">Success</p>
+                <p class="text-xs mt-0.5 text-emerald-700">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {settings && (
+        <>
+            <!-- Navigation Tabs (Matching AI Chatbot Pill Tab Style) -->
+            <div class="mb-6 p-1.5 bg-gray-100/90 rounded-2xl border border-gray-200/80 flex flex-wrap items-center gap-1.5">
+                <button type="button" id="tab-btn-settings" class="px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60 cursor-pointer">
+                    <Icon name="settings" class="w-4 h-4 shrink-0 text-brand-orange tab-icon" />
+                    <span>Provider & API Configurations</span>
+                </button>
+                <button type="button" id="tab-btn-cities" class="px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium cursor-pointer">
+                    <Icon name="map-pin" class="w-4 h-4 shrink-0 text-gray-400 tab-icon" />
+                    <span>City Synchronization</span>
+                    <span class="tab-badge px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-200/80 text-gray-600">{cachedCities.length.toLocaleString()}</span>
+                </button>
+                <button type="button" id="tab-btn-diag" class="px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium cursor-pointer">
+                    <Icon name="activity" class="w-4 h-4 shrink-0 text-gray-400 tab-icon" />
+                    <span>Connection & Tariff Diagnostics</span>
+                </button>
+                <button type="button" id="tab-btn-logs" class="px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium cursor-pointer">
+                    <Icon name="clock" class="w-4 h-4 shrink-0 text-gray-400 tab-icon" />
+                    <span>Portal API Logs</span>
+                    <span class="tab-badge px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-200/80 text-gray-600">{courierLogs.length}</span>
+                </button>
+            </div>
+
+            <!-- Tab 1: Settings & Providers -->
+            <div id="tab-content-settings" class="space-y-8">
+                <form method="POST" class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden p-6 md:p-8 space-y-8">
+                    <input type="hidden" name="action" value="save_settings" />
+
+                    <!-- Activation Banner -->
+                    <div class="border-b border-gray-100 pb-5 flex items-center justify-between">
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-800">Automated Logistics Service</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">Enable or pause automatic and 1-click booking via RS Courier.</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                            <input
+                                type="checkbox"
+                                name="courier_enabled"
+                                value="1"
+                                checked={settings.courier_enabled}
+                                class="sr-only peer"
+                            />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-3 text-xs font-semibold text-gray-700">Courier Active</span>
+                        </label>
+                    </div>
+
+                    <!-- Courier Partner Selection -->
+                    <div>
+                        <div class="mb-4">
+                            <h4 class="text-sm font-semibold text-gray-800">Primary Courier Partner</h4>
+                            <p class="text-xs text-gray-500 mt-0.5">Select the courier partner you want to use as default. The system automatically loads the exact verified RS Courier tariff parameters.</p>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {Object.values(COURIER_PROVIDERS).map((p) => {
+                                const isSelected = currentProvider === p.id;
+                                const settingKey = `courier_service_${p.id}`;
+                                const configuredService = settings?.[settingKey] || p.serviceType;
+                                const activeServiceObj = p.services.find(s => s.code === configuredService) || p.services[0];
+
+                                return (
+                                    <div 
+                                        class={`courier-card relative border rounded-lg p-4 cursor-pointer transition-all flex flex-col justify-between ${
+                                            isSelected 
+                                                ? 'border-brand-orange bg-orange-50/30 ring-1 ring-brand-orange shadow-sm' 
+                                                : 'border-gray-200 hover:border-gray-300 bg-white hover:shadow-2xs'
+                                        }`}
+                                        data-provider-card={p.id}
+                                    >
+                                        <div>
+                                            <div class="flex items-start justify-between gap-3 mb-3">
+                                                <div class="h-9 w-28 bg-white border border-gray-100 rounded-md px-2 py-1 flex items-center justify-center shadow-2xs">
+                                                    <img 
+                                                        src={p.logo} 
+                                                        alt={p.name} 
+                                                        class="max-h-7 max-w-full object-contain"
+                                                        onerror="this.style.display='none'"
+                                                    />
+                                                </div>
+                                                <div class="flex flex-col items-end gap-1">
+                                                    <span class={`status-badge text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
+                                                        isSelected 
+                                                            ? 'bg-emerald-100 text-emerald-800' 
+                                                            : 'bg-gray-100 text-gray-500 font-medium'
+                                                    }`}>
+                                                        {isSelected ? 'Active' : 'Available'}
+                                                    </span>
+                                                    <span class="text-[10px] text-gray-500 font-mono">Vendor ID: <strong class="text-gray-800 font-semibold">{p.vendorId}</strong></span>
+                                                </div>
+                                            </div>
+
+                                            <div class="flex items-center gap-2.5">
+                                                <input 
+                                                    type="radio" 
+                                                    name="courier_default_provider" 
+                                                    value={p.id} 
+                                                    checked={isSelected}
+                                                    class="provider-radio text-brand-orange focus:ring-brand-orange h-4 w-4 border-gray-300 shrink-0 cursor-pointer"
+                                                />
+                                                <span class="font-bold text-gray-900 text-sm">{p.name}</span>
+                                            </div>
+                                            <p class="text-xs text-gray-500 mt-1 pl-6 leading-relaxed">{p.description}</p>
+                                        </div>
+
+                                        <div class="mt-4 pt-3 border-t border-gray-100">
+                                            <div class="flex items-center justify-between mb-1.5">
+                                                <span class="text-[11px] font-semibold text-gray-600">Service Type</span>
+                                                <span class="text-[10px] text-gray-400 font-normal">Active tariff</span>
+                                            </div>
+
+                                            {/* Hidden form input holding value */}
+                                            <input 
+                                                type="hidden" 
+                                                name={`courier_service_${p.id}`} 
+                                                id={`input-service-${p.id}`} 
+                                                value={configuredService} 
+                                            />
+
+                                            {/* Custom Themed Dropdown */}
+                                            <div class="relative custom-service-dropdown" data-provider={p.id}>
+                                                <button
+                                                    type="button"
+                                                    class="dropdown-trigger-btn w-full flex items-center justify-between gap-2 text-xs font-medium text-gray-800 bg-white border border-gray-200 hover:border-gray-300 rounded-md px-3 py-2 text-left focus:outline-none focus:ring-1 focus:ring-brand-orange focus:border-brand-orange transition-all shadow-2xs cursor-pointer"
+                                                >
+                                                    <div class="flex items-center gap-2 truncate">
+                                                        <span class="truncate selected-text font-medium">{activeServiceObj.code}</span>
+                                                        <span class={`recommended-badge text-[9px] font-bold bg-orange-100 text-brand-orange px-1.5 py-0.5 rounded tracking-wider shrink-0 ${activeServiceObj.recommended ? '' : 'hidden'}`}>
+                                                            Recommended
+                                                        </span>
+                                                    </div>
+                                                    <svg class="dropdown-chevron w-3.5 h-3.5 text-gray-400 transition-transform duration-200 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                </button>
+
+                                                {/* Dropdown Menu Popup */}
+                                                <div class="dropdown-menu-container absolute left-0 right-0 top-full mt-1.5 z-30 bg-white border border-gray-100 rounded-lg shadow-xl p-1 hidden">
+                                                    {p.services.map((svc) => {
+                                                        const isItemActive = configuredService === svc.code;
+                                                        return (
+                                                            <button
+                                                                type="button"
+                                                                data-code={svc.code}
+                                                                data-recommended={svc.recommended ? "true" : "false"}
+                                                                class={`dropdown-option-btn w-full flex items-center justify-between px-2.5 py-2 text-xs rounded-md text-left transition-colors cursor-pointer ${
+                                                                    isItemActive 
+                                                                        ? 'bg-orange-50/80 text-brand-orange font-semibold' 
+                                                                        : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                                                                }`}
+                                                            >
+                                                                <div class="flex items-center gap-2">
+                                                                    <span>{svc.code}</span>
+                                                                    {svc.recommended && (
+                                                                        <span class="text-[9px] font-bold bg-orange-100 text-brand-orange px-1.5 py-0.5 rounded tracking-wider">
+                                                                            Recommended
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <svg class={`check-icon w-3.5 h-3.5 text-brand-orange shrink-0 ${isItemActive ? '' : 'hidden'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <!-- API Credentials -->
+                    <div class="border-t border-gray-100 pt-6">
+                        <h4 class="text-sm font-semibold text-gray-800 mb-1">RS Courier API Account Credentials</h4>
+                        <p class="text-xs text-gray-500 mb-4">Master merchant credentials from RS Courier developer portal.</p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Client Code</label>
+                                <input
+                                    type="text"
+                                    name="courier_client_code"
+                                    value={settings.courier_client_code}
+                                    placeholder="1298"
+                                    required
+                                    class="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Profile ID</label>
+                                <input
+                                    type="text"
+                                    name="courier_profile_id"
+                                    value={settings.courier_profile_id}
+                                    placeholder="20485"
+                                    required
+                                    class="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Origin City</label>
+                                <input
+                                    type="text"
+                                    name="courier_origin_city"
+                                    value={settings.courier_origin_city || "Sargodha"}
+                                    placeholder="Sargodha"
+                                    required
+                                    class="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Default Parcel Weight (KG)</label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    min="0.1"
+                                    name="courier_default_weight"
+                                    value={settings.courier_default_weight || "0.5"}
+                                    placeholder="0.5"
+                                    class="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                            <div class="md:col-span-2 lg:col-span-4">
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Auth Key</label>
+                                <input
+                                    type="password"
+                                    name="courier_auth_key"
+                                    value={settings.courier_auth_key}
+                                    placeholder="8a1fb52a-••••-••••-••••-••••••••••••"
+                                    required
+                                    class="w-full text-sm font-mono border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                            <div class="md:col-span-2 lg:col-span-4">
+                                <label class="block text-xs font-semibold text-gray-700 mb-1.5">Special Instructions on Shipping Label</label>
+                                <input
+                                    type="text"
+                                    name="courier_special_instructions"
+                                    value={settings.courier_special_instructions || "CALL BEFORE DELIVERY & CALL AT LOCATION"}
+                                    placeholder="CALL BEFORE DELIVERY & CALL AT LOCATION"
+                                    class="w-full text-sm border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-100 pt-6 flex justify-end">
+                        <button
+                            type="submit"
+                            class="bg-brand-orange text-white text-sm font-semibold px-6 py-2.5 rounded-md hover:bg-rose-600 focus:outline-none transition-colors shadow-sm cursor-pointer flex items-center gap-2"
+                        >
+                            <Icon name="check" class="w-4 h-4" />
+                            <span>Save Configurations</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Tab 2: City Synchronization -->
+            <div id="tab-content-cities" class="hidden space-y-6">
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-6 md:p-8 space-y-6">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-5">
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-800 flex items-center gap-2">
+                                <Icon name="map-pin" class="w-5 h-5 text-brand-orange" />
+                                <span>RS Courier Operational Cities</span>
+                            </h3>
+                            <p class="text-xs text-gray-500 mt-1">
+                                Automated booking validates destination cities against RS Courier database. Currently caching <strong>{cachedCities.length.toLocaleString()} cities</strong>.
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-gray-400">Last Synced: <strong class="text-gray-700">{lastSyncedFormatted}</strong></span>
+                            <form method="POST">
+                                <input type="hidden" name="action" value="sync_cities" />
+                                <button
+                                    type="submit"
+                                    class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                                >
+                                    <Icon name="refresh-cw" class="w-3.5 h-3.5" />
+                                    <span>Sync Cities Now</span>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- City Search & Lookup Tool -->
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Test Destination City Validation</label>
+                        <div class="relative max-w-md">
+                            <input
+                                type="text"
+                                id="city-lookup-input"
+                                placeholder="Type a city name (e.g. Sheikhupura, Lahore, Swat)..."
+                                class="w-full text-sm border border-gray-200 rounded-md pl-3 pr-10 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                            <div class="absolute right-3 top-2.5 text-gray-400">
+                                <Icon name="search" class="w-4 h-4" />
+                            </div>
+                        </div>
+                        <div id="city-lookup-result" class="mt-2 text-xs"></div>
+                    </div>
+
+                    <!-- City Preview Tags -->
+                    <div class="border-t border-gray-100 pt-5">
+                        <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-3">Popular Operational Cities Preview</span>
+                        <div class="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-1 border border-gray-100 rounded-md bg-gray-50/50">
+                            {cachedCities.slice(0, 100).map((city) => (
+                                <span class="bg-white border border-gray-200 text-gray-700 text-xs px-2.5 py-1 rounded shadow-2xs">
+                                    {city}
+                                </span>
+                            ))}
+                            {cachedCities.length > 100 && (
+                                <span class="text-xs text-gray-400 self-center px-2">+{cachedCities.length - 100} more operational cities</span>
+                            )}
+                        </div>
+                    </div>
+
+                    <!-- Excluded Cities Management Section -->
+                    <div class="border-t border-gray-100 pt-6 space-y-4">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                                    <Icon name="alert-triangle" class="w-4 h-4 text-amber-500" />
+                                    <span>Excluded Cities (Hidden from Checkout)</span>
+                                </h4>
+                                <p class="text-xs text-gray-500 mt-0.5">
+                                    Cities listed here will <strong>not be displayed</strong> in the customer checkout dropdown. Use this to exclude cities unserviced by your courier partner.
+                                </p>
+                            </div>
+                            <span class="text-xs font-semibold px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full shrink-0">
+                                {excludedCities.length} Excluded
+                            </span>
+                        </div>
+
+                        <!-- Add City to Exclusion List Form -->
+                        <form method="POST" class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 max-w-xl">
+                            <input type="hidden" name="action" value="add_excluded_city" />
+                            <div class="relative flex-1">
+                                <input
+                                    type="text"
+                                    name="city_to_exclude"
+                                    required
+                                    list="cached-cities-datalist"
+                                    placeholder="Type city name to exclude (e.g. Faisalabad)..."
+                                    class="w-full text-xs border border-gray-200 rounded-md px-3 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange bg-white"
+                                />
+                                <datalist id="cached-cities-datalist">
+                                    {cachedCities.map(c => <option value={c}></option>)}
+                                </datalist>
+                            </div>
+                            <button
+                                type="submit"
+                                class="bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-4 py-2 rounded-md transition-colors cursor-pointer shrink-0 shadow-2xs flex items-center justify-center gap-1.5"
+                            >
+                                <span>+ Exclude City</span>
+                            </button>
+                        </form>
+
+                        <!-- Excluded Cities Pills Box -->
+                        <div class="bg-gray-50/80 border border-gray-200 rounded-lg p-3.5 min-h-[64px]">
+                            {excludedCities.length === 0 ? (
+                                <p class="text-xs text-gray-400 italic py-1.5">
+                                    No cities are currently excluded. All {cachedCities.length.toLocaleString()} operational cities are visible in the checkout dropdown.
+                                </p>
+                            ) : (
+                                <div class="flex flex-wrap gap-2">
+                                    {excludedCities.map((city) => (
+                                        <span class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-800 text-xs px-2.5 py-1 rounded-md shadow-2xs font-medium">
+                                            <span>{city}</span>
+                                            <form method="POST" class="inline m-0 p-0">
+                                                <input type="hidden" name="action" value="remove_excluded_city" />
+                                                <input type="hidden" name="city_to_restore" value={city} />
+                                                <button
+                                                    type="submit"
+                                                    title={`Restore ${city} to checkout`}
+                                                    class="text-red-400 hover:text-red-700 hover:bg-red-50 rounded p-0.5 transition-colors cursor-pointer"
+                                                >
+                                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+                                                    </svg>
+                                                </button>
+                                            </form>
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Diagnostics / Test Booking -->
+            <div id="tab-content-diag" class="hidden space-y-6">
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm p-6 md:p-8 space-y-6">
+                    <div class="border-b border-gray-100 pb-4">
+                        <h3 class="text-base font-semibold text-gray-800 flex items-center gap-2">
+                            <Icon name="activity" class="w-5 h-5 text-brand-orange" />
+                            <span>Live Tariff & Booking Diagnostics</span>
+                        </h3>
+                        <p class="text-xs text-gray-500 mt-1">
+                            Sends a live 10 PKR test order to RS Courier with the selected partner and automatically cancels it immediately. Verifies account tariffs, credentials, and city matching with zero risk.
+                        </p>
+                    </div>
+
+                    <form method="POST" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <input type="hidden" name="action" value="test_booking" />
+                        <div class="relative">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Courier Partner to Test</label>
+                            <input
+                                type="hidden"
+                                id="diag_test_provider"
+                                name="test_provider"
+                                value={currentProvider || 'postex'}
+                                required
+                            />
+
+                            <!-- Main selector button -->
+                            <button
+                                type="button"
+                                id="diag-provider-btn"
+                                class="w-full text-left rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-orange focus:border-brand-orange transition-shadow relative cursor-pointer"
+                            >
+                                <span id="diag-provider-display" class="block truncate text-gray-900 font-medium">
+                                    {COURIER_PROVIDERS[currentProvider || 'postex']?.name || 'PostEx'} ({COURIER_PROVIDERS[currentProvider || 'postex']?.product || 'Overnight Post Ex'} - Vendor {COURIER_PROVIDERS[currentProvider || 'postex']?.vendorId || '36'})
+                                </span>
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                    <svg id="diag-provider-chevron" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </div>
+                            </button>
+
+                            <!-- Custom Dropdown Menu -->
+                            <div
+                                id="diag-provider-dropdown"
+                                class="absolute z-50 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-xl hidden overflow-hidden flex-col"
+                            >
+                                <ul id="diag-provider-list" class="max-h-56 overflow-y-auto admin-theme-scroll">
+                                    {Object.values(COURIER_PROVIDERS).filter(p => p.id !== 'auto').map((p) => (
+                                        <li 
+                                            class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-gray-700 text-xs border-b border-gray-50 last:border-b-0 diag-provider-opt flex items-center justify-between"
+                                            data-provider-val={p.id}
+                                            data-provider-text={`${p.name} (${p.product} - Vendor ${p.vendorId})`}
+                                        >
+                                            <div class="flex items-center gap-2 min-w-0">
+                                                <span class="font-semibold text-gray-900 truncate">{p.name}</span>
+                                                <span class="text-[10px] text-gray-400 font-mono">Vendor {p.vendorId}</span>
+                                            </div>
+                                            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                                                {p.serviceType}
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="relative">
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Destination City</label>
+                            <input
+                                type="hidden"
+                                id="diag_test_city"
+                                name="test_city"
+                                value="Lahore"
+                                required
+                            />
+
+                            <!-- Main selector button -->
+                            <button
+                                type="button"
+                                id="diag-city-btn"
+                                class="w-full text-left rounded-md border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-brand-orange focus:border-brand-orange transition-shadow relative cursor-pointer"
+                            >
+                                <span id="diag-city-display" class="block truncate text-gray-900 font-medium">Lahore</span>
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </div>
+                            </button>
+
+                            <!-- Custom Dropdown Menu -->
+                            <div
+                                id="diag-city-dropdown"
+                                class="absolute z-50 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-xl hidden overflow-hidden flex-col"
+                            >
+                                <!-- Search Input -->
+                                <div class="p-2 border-b border-gray-100 bg-gray-50">
+                                    <input
+                                        type="text"
+                                        id="diag-city-search"
+                                        autocomplete="off"
+                                        class="w-full rounded-md border border-gray-300 bg-white p-2 text-xs focus:outline-none focus:ring-1 focus:ring-brand-orange focus:border-brand-orange"
+                                        placeholder="Search city (e.g. Lahore, Karachi, Sargodha)..."
+                                    />
+                                </div>
+                                <!-- Scrollable List -->
+                                <ul id="diag-city-list" class="max-h-56 overflow-y-auto admin-theme-scroll">
+                                    {cachedCities.filter((c: string) => c && c !== "#N/A").map((city: string) => (
+                                        <li class="px-3 py-2 hover:bg-orange-50 cursor-pointer text-gray-700 text-xs border-b border-gray-50 last:border-b-0 diag-city-opt">{city}</li>
+                                    ))}
+                                    <li id="diag-city-empty" class="px-3 py-3 text-xs text-gray-500 text-center hidden">No cities found</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="flex items-end">
+                            <button
+                                type="submit"
+                                class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 px-4 rounded-md transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                            >
+                                <Icon name="play" class="w-4 h-4" />
+                                <span>Run Live Connection Test</span>
+                            </button>
+                        </div>
+                    </form>
+
+                    {diagResult && (
+                        <div class="border-t border-gray-100 pt-6 space-y-4">
+                            <h4 class="text-xs font-bold uppercase tracking-wider text-gray-600">Latest Diagnostic Test Output</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-gray-900 text-gray-200 p-4 rounded-lg font-mono text-xs overflow-x-auto shadow-inner">
+                                    <span class="text-[10px] text-gray-400 uppercase font-bold block mb-2">Request Payload Sent</span>
+                                    <pre><code>{JSON.stringify(diagResult.requestPayload, null, 2)}</code></pre>
+                                </div>
+                                <div class={`${diagResult.success ? 'bg-gray-900 text-emerald-400' : 'bg-red-950 text-red-300'} p-4 rounded-lg font-mono text-xs overflow-x-auto shadow-inner`}>
+                                    <span class="text-[10px] text-gray-400 uppercase font-bold block mb-2">RS Courier API Response</span>
+                                    <pre><code>{JSON.stringify(diagResult.apiResponse, null, 2)}</code></pre>
+                                    {diagResult.cancelMessage && (
+                                        <div class="mt-3 pt-3 border-t border-gray-800 text-amber-300 text-xs font-sans">
+                                            Notice: {diagResult.cancelMessage}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <!-- Tab 4: API Request Logs -->
+            <div id="tab-content-logs" class="hidden">
+                <div class="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden p-6 md:p-8">
+                    <div class="border-b border-gray-100 pb-4 flex justify-between items-center mb-6">
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-800">RS Courier API Request Logs</h3>
+                            <p class="text-xs text-gray-500 mt-0.5">Showing the last 100 API interactions with RS Courier.</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <form method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete all RS Courier logs?');">
+                                <input type="hidden" name="action" value="clear_logs" />
+                                <button
+                                    type="submit"
+                                    class="bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 text-xs font-semibold px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                                >
+                                    <Icon name="trash-2" class="w-3.5 h-3.5" />
+                                    <span>Clear Logs</span>
+                                </button>
+                            </form>
+                            <button
+                                type="button"
+                                onclick="window.location.reload()"
+                                class="bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-semibold px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                                <Icon name="refresh-cw" class="w-3.5 h-3.5" />
+                                <span>Refresh Logs</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {courierLogs.length === 0 ? (
+                        <div class="text-center py-12 border border-dashed border-gray-200 rounded-lg text-gray-400 space-y-2">
+                            <div class="flex justify-center text-gray-300">
+                                <Icon name="package" class="w-10 h-10" />
+                            </div>
+                            <p class="text-sm font-medium text-gray-600">No API logs recorded yet.</p>
+                            <p class="text-xs max-w-sm mx-auto">Once an order is created or updated through RS Courier, logs will appear here.</p>
+                        </div>
+                    ) : (
+                        <div class="overflow-x-auto border border-gray-100 rounded-lg shadow-sm">
+                            <table class="min-w-full divide-y divide-gray-100 text-left text-xs">
+                                <thead class="bg-gray-50/80">
+                                    <tr>
+                                        <th class="px-4 py-3 font-semibold text-gray-600">Timestamp</th>
+                                        <th class="px-4 py-3 font-semibold text-gray-600">Action / Provider</th>
+                                        <th class="px-4 py-3 font-semibold text-gray-600">Order ID</th>
+                                        <th class="px-4 py-3 font-semibold text-gray-600">Tracking No</th>
+                                        <th class="px-4 py-3 font-semibold text-gray-600">Status</th>
+                                        <th class="px-4 py-3 font-semibold text-gray-600 text-right">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-gray-100 bg-white">
+                                    {courierLogs.map((log) => (
+                                        <>
+                                        <tr class="hover:bg-gray-50/50 transition-colors">
+                                            <td class="px-4 py-3 text-gray-500 whitespace-nowrap">
+                                                {new Date(log.created_at).toLocaleString('en-PK', { timeZone: 'Asia/Karachi', dateStyle: 'short', timeStyle: 'medium' })}
+                                            </td>
+                                            <td class="px-4 py-3 font-medium text-gray-800">
+                                                <span class={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider border ${
+                                                    log.action && log.action.toUpperCase().includes('CANCEL')
+                                                        ? 'bg-orange-50 text-orange-700 border-orange-200' 
+                                                        : 'bg-blue-50 text-blue-700 border-blue-200'
+                                                }`}>
+                                                    {log.action}
+                                                </span>
+                                            </td>
+                                            <td class="px-4 py-3 text-gray-600 font-mono text-[11px]">{log.order_id || '-'}</td>
+                                            <td class="px-4 py-3 text-gray-600 font-mono text-[11px]">{log.tracking_no || '-'}</td>
+                                            <td class="px-4 py-3">
+                                                {log.error ? (
+                                                    <span class="text-red-600 font-medium bg-red-50 px-2 py-0.5 rounded border border-red-100">Failed</span>
+                                                ) : (
+                                                    <span class="text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">Success</span>
+                                                )}
+                                            </td>
+                                            <td class="px-4 py-3 text-right">
+                                                <button
+                                                    type="button"
+                                                    data-view-payload-id={log.id}
+                                                    class="text-brand-orange hover:text-brand-orange/80 font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                                                >
+                                                    View JSON
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <tr id={`payload-row-${log.id}`} class="hidden bg-gray-50/50 border-t-0">
+                                            <td colspan="6" class="px-4 py-4 border-b border-gray-100">
+                                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                                    {log.payload && (
+                                                        <div class="bg-gray-800 text-gray-300 p-3 rounded-lg overflow-x-auto text-[11px] font-mono shadow-inner">
+                                                            <div class="text-gray-500 text-[10px] uppercase font-bold mb-2 tracking-wider">
+                                                                <span>Request Payload</span>
+                                                            </div>
+                                                            <pre><code>{(() => {
+                                                                try { return JSON.stringify(JSON.parse(log.payload), null, 2); }
+                                                                catch(e) { return log.payload; }
+                                                            })()}</code></pre>
+                                                        </div>
+                                                    )}
+                                                    {(log.response || log.error) && (
+                                                        <div class={`${log.error ? 'bg-red-950 text-red-300' : 'bg-gray-800 text-gray-300'} p-3 rounded-lg overflow-x-auto text-[11px] font-mono shadow-inner`}>
+                                                            <div class={`${log.error ? 'text-red-500' : 'text-gray-500'} text-[10px] uppercase font-bold mb-2 tracking-wider`}>
+                                                                {log.error ? 'Error Details' : 'API Response'}
+                                                            </div>
+                                                            <pre><code>{(() => {
+                                                                const out = log.error || log.response;
+                                                                try { return JSON.stringify(JSON.parse(out), null, 2); }
+                                                                catch(e) { return out; }
+                                                            })()}</code></pre>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        </>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </>
+    )}
+</AdminLayout>
+
+<script>
+    const initCourierSettings = () => {
+        const tabs = [
+            { btn: document.getElementById("tab-btn-settings"), content: document.getElementById("tab-content-settings") },
+            { btn: document.getElementById("tab-btn-cities"), content: document.getElementById("tab-content-cities") },
+            { btn: document.getElementById("tab-btn-diag"), content: document.getElementById("tab-content-diag") },
+            { btn: document.getElementById("tab-btn-logs"), content: document.getElementById("tab-content-logs") }
+        ];
+
+        const activeClass = "px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60 cursor-pointer";
+        const inactiveClass = "px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium cursor-pointer";
+        const tabKeys = ['settings', 'cities', 'diag', 'logs'];
+
+        const selectTab = (activeIdx: number, updateUrl = true) => {
+            tabs.forEach((tab, idx) => {
+                if (!tab.btn || !tab.content) return;
+                const icon = tab.btn.querySelector('.tab-icon');
+                const badge = tab.btn.querySelector('.tab-badge');
+                if (idx === activeIdx) {
+                    tab.btn.className = activeClass;
+                    tab.content.classList.remove("hidden");
+                    if (icon) { icon.classList.remove('text-gray-400'); icon.classList.add('text-brand-orange'); }
+                    if (badge) { badge.className = 'tab-badge px-2 py-0.5 rounded-full text-[11px] font-bold bg-orange-100 text-brand-orange'; }
+                } else {
+                    tab.btn.className = inactiveClass;
+                    tab.content.classList.add("hidden");
+                    if (icon) { icon.classList.remove('text-brand-orange'); icon.classList.add('text-gray-400'); }
+                    if (badge) { badge.className = 'tab-badge px-2 py-0.5 rounded-full text-[11px] font-bold bg-gray-200/80 text-gray-600'; }
+                }
+            });
+            if (updateUrl && tabKeys[activeIdx]) {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', tabKeys[activeIdx]);
+                window.history.replaceState({}, '', url.toString());
+            }
+        };
+
+        tabs.forEach((tab, idx) => {
+            if (tab.btn && !tab.btn.dataset.bound) {
+                tab.btn.dataset.bound = "true";
+                tab.btn.addEventListener("click", () => selectTab(idx));
+            }
+        });
+
+        // Initialize active tab from URL query params
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialTab = urlParams.get('tab');
+        if (initialTab === 'cities') selectTab(1, false);
+        else if (initialTab === 'diag') selectTab(2, false);
+        else if (initialTab === 'logs') selectTab(3, false);
+        else selectTab(0, false);
+
+        // City live lookup test
+        const lookupInput = document.getElementById("city-lookup-input") as HTMLInputElement | null;
+        const lookupResult = document.getElementById("city-lookup-result");
+        if (lookupInput && lookupResult && !lookupInput.dataset.bound) {
+            lookupInput.dataset.bound = "true";
+            let debounceTimer: any;
+            lookupInput.addEventListener("input", () => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(async () => {
+                    const q = lookupInput.value.trim();
+                    if (!q) {
+                        lookupResult.innerHTML = "";
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`/api/admin/courier-cities?check=${encodeURIComponent(q)}`);
+                        const data = await res.json();
+                        if (data.isValid) {
+                            if (data.isExcluded) {
+                                lookupResult.innerHTML = `<span class="text-amber-800 bg-amber-50 px-2.5 py-1 rounded border border-amber-200 inline-flex items-center gap-1.5 font-medium">Valid RS City: <strong>${data.normalizedCity}</strong> &mdash; <span class="text-red-600 font-semibold">(EXCLUDED from Checkout)</span></span>`;
+                            } else {
+                                lookupResult.innerHTML = `<span class="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded border border-emerald-200 inline-flex items-center gap-1.5 font-medium">Valid RS City: <strong>${data.normalizedCity}</strong> &mdash; Active on Checkout</span>`;
+                            }
+                        } else {
+                            lookupResult.innerHTML = `<span class="text-rose-700 bg-rose-50 px-2.5 py-1 rounded border border-rose-200 inline-flex items-center gap-1.5 font-medium">City "${q}" not found in RS operational cities list. Please check spelling.</span>`;
+                        }
+                    } catch (e) {
+                        lookupResult.innerHTML = "";
+                    }
+                }, 250);
+            });
+        }
+
+        // Payload JSON View Toggle
+        const viewPayloadButtons = document.querySelectorAll<HTMLElement>("[data-view-payload-id]");
+        viewPayloadButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+
+            btn.addEventListener("click", () => {
+                const logId = btn.getAttribute("data-view-payload-id");
+                const row = document.getElementById(`payload-row-${logId}`);
+                if (row) {
+                    if (row.classList.contains("hidden")) {
+                        row.classList.remove("hidden");
+                        btn.textContent = "Hide JSON";
+                    } else {
+                        row.classList.add("hidden");
+                        btn.textContent = "View JSON";
+                    }
+                }
+            });
+        });
+
+        // Courier Cards selection & Custom Themed Dropdowns
+        const courierCards = document.querySelectorAll<HTMLElement>(".courier-card");
+        const customDropdowns = document.querySelectorAll<HTMLElement>(".custom-service-dropdown");
+
+        const updateCardStyles = (selectedProviderId: string) => {
+            courierCards.forEach((card) => {
+                const isSelected = card.getAttribute("data-provider-card") === selectedProviderId;
+                const badge = card.querySelector<HTMLElement>(".status-badge");
+                const radio = card.querySelector<HTMLInputElement>(".provider-radio");
+
+                if (radio) {
+                    radio.checked = isSelected;
+                }
+
+                if (isSelected) {
+                    card.className = "courier-card relative border rounded-lg p-4 cursor-pointer transition-all flex flex-col justify-between border-brand-orange bg-orange-50/30 ring-1 ring-brand-orange shadow-sm";
+                    if (badge) {
+                        badge.className = "status-badge text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider bg-emerald-100 text-emerald-800";
+                        badge.textContent = "Active";
+                    }
+                } else {
+                    card.className = "courier-card relative border rounded-lg p-4 cursor-pointer transition-all flex flex-col justify-between border-gray-200 hover:border-gray-300 bg-white hover:shadow-2xs";
+                    if (badge) {
+                        badge.className = "status-badge text-[10px] font-medium px-2 py-0.5 rounded uppercase tracking-wider bg-gray-100 text-gray-500";
+                        badge.textContent = "Available";
+                    }
+                }
+            });
+        };
+
+        courierCards.forEach((card) => {
+            if (card.dataset.bound) return;
+            card.dataset.bound = "true";
+
+            card.addEventListener("click", (e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest(".custom-service-dropdown")) {
+                    return; // Dropdown click handled separately
+                }
+                const providerId = card.getAttribute("data-provider-card");
+                if (providerId) {
+                    updateCardStyles(providerId);
+                }
+            });
+        });
+
+        // Custom Dropdown logic
+        customDropdowns.forEach((dropdown) => {
+            if (dropdown.dataset.bound) return;
+            dropdown.dataset.bound = "true";
+
+            const triggerBtn = dropdown.querySelector<HTMLButtonElement>(".dropdown-trigger-btn");
+            const menu = dropdown.querySelector<HTMLElement>(".dropdown-menu-container");
+            const chevron = dropdown.querySelector<HTMLElement>(".dropdown-chevron");
+            const providerId = dropdown.getAttribute("data-provider");
+            const hiddenInput = document.getElementById(`input-service-${providerId}`) as HTMLInputElement | null;
+            const selectedText = dropdown.querySelector<HTMLElement>(".selected-text");
+            const recommendedBadge = dropdown.querySelector<HTMLElement>(".recommended-badge");
+            const optionBtns = dropdown.querySelectorAll<HTMLButtonElement>(".dropdown-option-btn");
+
+            if (triggerBtn && menu) {
+                triggerBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    // Close all other open dropdowns
+                    customDropdowns.forEach((other) => {
+                        if (other !== dropdown) {
+                            other.querySelector<HTMLElement>(".dropdown-menu-container")?.classList.add("hidden");
+                            other.querySelector<HTMLElement>(".dropdown-chevron")?.classList.remove("rotate-180");
+                        }
+                    });
+
+                    menu.classList.toggle("hidden");
+                    chevron?.classList.toggle("rotate-180");
+                });
+            }
+
+            optionBtns.forEach((optBtn) => {
+                optBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const code = optBtn.getAttribute("data-code") || "";
+                    const isRec = optBtn.getAttribute("data-recommended") === "true";
+
+                    // Update hidden input
+                    if (hiddenInput) {
+                        hiddenInput.value = code;
+                    }
+
+                    // Update trigger UI
+                    if (selectedText) selectedText.textContent = code;
+                    if (recommendedBadge) {
+                        if (isRec) {
+                            recommendedBadge.classList.remove("hidden");
+                        } else {
+                            recommendedBadge.classList.add("hidden");
+                        }
+                    }
+
+                    // Update options active styling
+                    optionBtns.forEach((btn) => {
+                        const isMatch = btn.getAttribute("data-code") === code;
+                        const check = btn.querySelector<HTMLElement>(".check-icon");
+                        if (isMatch) {
+                            btn.className = "dropdown-option-btn w-full flex items-center justify-between px-2.5 py-2 text-xs rounded-md text-left transition-colors cursor-pointer bg-orange-50/80 text-brand-orange font-semibold";
+                            check?.classList.remove("hidden");
+                        } else {
+                            btn.className = "dropdown-option-btn w-full flex items-center justify-between px-2.5 py-2 text-xs rounded-md text-left transition-colors cursor-pointer text-gray-700 hover:bg-gray-50 hover:text-gray-900";
+                            check?.classList.add("hidden");
+                        }
+                    });
+
+                    // Close menu
+                    menu?.classList.add("hidden");
+                    chevron?.classList.remove("rotate-180");
+
+                    // Activate this provider card
+                    if (providerId) {
+                        updateCardStyles(providerId);
+                    }
+                });
+            });
+        });
+
+        // Close dropdowns on outside click
+        document.addEventListener("click", (e) => {
+            const target = e.target as HTMLElement;
+            if (!target.closest(".custom-service-dropdown")) {
+                customDropdowns.forEach((d) => {
+                    d.querySelector<HTMLElement>(".dropdown-menu-container")?.classList.add("hidden");
+                    d.querySelector<HTMLElement>(".dropdown-chevron")?.classList.remove("rotate-180");
+                });
+            }
+        });
+
+        // Diagnostics Searchable City Dropdown
+        const diagCityBtn = document.getElementById("diag-city-btn");
+        const diagCityDropdown = document.getElementById("diag-city-dropdown");
+        const diagCitySearch = document.getElementById("diag-city-search") as HTMLInputElement | null;
+        const diagCityInput = document.getElementById("diag_test_city") as HTMLInputElement | null;
+        const diagCityDisplay = document.getElementById("diag-city-display");
+        const diagCityOptions = document.querySelectorAll<HTMLElement>(".diag-city-opt");
+        const diagCityEmpty = document.getElementById("diag-city-empty");
+
+        if (diagCityBtn && diagCityDropdown) {
+            diagCityBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                // Close provider dropdown if open
+                const provDrop = document.getElementById("diag-provider-dropdown");
+                if (provDrop) { provDrop.classList.add("hidden"); provDrop.classList.remove("flex"); }
+                const provChev = document.getElementById("diag-provider-chevron");
+                if (provChev) provChev.classList.remove("rotate-180");
+
+                diagCityDropdown.classList.toggle("hidden");
+                diagCityDropdown.classList.toggle("flex");
+                if (!diagCityDropdown.classList.contains("hidden")) {
+                    setTimeout(() => diagCitySearch?.focus(), 100);
+                }
+            });
+
+            diagCitySearch?.addEventListener("input", () => {
+                const val = (diagCitySearch.value || "").toLowerCase().trim();
+                let hasMatch = false;
+                diagCityOptions.forEach((opt) => {
+                    const text = (opt.textContent || "").toLowerCase();
+                    if (text.includes(val)) {
+                        opt.style.display = "block";
+                        hasMatch = true;
+                    } else {
+                        opt.style.display = "none";
+                    }
+                });
+                if (diagCityEmpty) {
+                    diagCityEmpty.style.display = hasMatch ? "none" : "block";
+                }
+            });
+
+            diagCityOptions.forEach((opt) => {
+                opt.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    const selected = opt.textContent?.trim() || "";
+                    if (diagCityInput) diagCityInput.value = selected;
+                    if (diagCityDisplay) {
+                        diagCityDisplay.textContent = selected;
+                        diagCityDisplay.className = "block truncate text-gray-900 font-medium";
+                    }
+                    diagCityDropdown.classList.add("hidden");
+                    diagCityDropdown.classList.remove("flex");
+                    if (diagCitySearch) {
+                        diagCitySearch.value = "";
+                        diagCitySearch.dispatchEvent(new Event("input"));
+                    }
+                });
+            });
+
+            document.addEventListener("click", (e) => {
+                const target = e.target as HTMLElement;
+                if (!target.closest("#diag-city-dropdown") && !target.closest("#diag-city-btn")) {
+                    diagCityDropdown.classList.add("hidden");
+                    diagCityDropdown.classList.remove("flex");
+                }
+            });
+        }
+
+        // Diagnostics Courier Provider Custom Dropdown
+        const diagProvBtn = document.getElementById("diag-provider-btn");
+        const diagProvDropdown = document.getElementById("diag-provider-dropdown");
+        const diagProvInput = document.getElementById("diag_test_provider") as HTMLInputElement | null;
+        const diagProvDisplay = document.getElementById("diag-provider-display");
+        const diagProvChevron = document.getElementById("diag-provider-chevron");
+        const diagProvOptions = document.querySelectorAll<HTMLElement>(".diag-provider-opt");
+
+        if (diagProvBtn && diagProvDropdown) {
+            diagProvBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                // Close city dropdown if open
+                if (diagCityDropdown) { diagCityDropdown.classList.add("hidden"); diagCityDropdown.classList.remove("flex"); }
+
+                diagProvDropdown.classList.toggle("hidden");
+                diagProvDropdown.classList.toggle("flex");
+                if (diagProvChevron) {
+                    diagProvChevron.classList.toggle("rotate-180", !diagProvDropdown.classList.contains("hidden"));
+                }
+            });
+
+            diagProvOptions.forEach((opt) => {
+                opt.addEventListener("click", (e) => {
+                    e.preventDefault();
+                    const val = opt.getAttribute("data-provider-val") || "";
+                    const text = opt.getAttribute("data-provider-text") || "";
+                    if (diagProvInput) diagProvInput.value = val;
+                    if (diagProvDisplay) diagProvDisplay.textContent = text;
+                    diagProvDropdown.classList.add("hidden");
+                    diagProvDropdown.classList.remove("flex");
+                    if (diagProvChevron) diagProvChevron.classList.remove("rotate-180");
+                });
+            });
+
+            document.addEventListener("click", (e) => {
+                const target = e.target as HTMLElement;
+                if (!target.closest("#diag-provider-dropdown") && !target.closest("#diag-provider-btn")) {
+                    diagProvDropdown.classList.add("hidden");
+                    diagProvDropdown.classList.remove("flex");
+                    if (diagProvChevron) diagProvChevron.classList.remove("rotate-180");
+                }
+            });
+        }
+    };
+
+    initCourierSettings();
+    document.addEventListener("astro:page-load", initCourierSettings);
+</script>

@@ -1,0 +1,340 @@
+---
+// src/pages/admin/print-invoices.astro
+// Fetches UNALTERED labels from RS Courier portal in bulk, then arranges them
+// in a 2x4 (8 labels) or 2x3 (6 labels) A4 Landscape grid using iframes
+// so the RS portal's own CSS renders each label exactly as the portal does.
+
+import { getCourierProviderInfo } from "../../utils/courier";
+
+const url = new URL(Astro.request.url);
+const idsParam = url.searchParams.get("ids") || "";
+const orderIds = idsParam.split(",").map(s => s.trim()).filter(Boolean);
+
+if (orderIds.length === 0) {
+    return new Response("No orders selected", { status: 400 });
+}
+
+const db = Astro.locals.runtime?.env?.DB;
+if (!db) {
+    return new Response("Database binding missing", { status: 500 });
+}
+
+const placeholders = orderIds.map(() => "?").join(",");
+
+let orders: any[] = [];
+let settings: any = {};
+
+try {
+    const { getAllSettings } = await import("../../utils/settings");
+    settings = await getAllSettings(db);
+    const ordersResult = await db.prepare(`SELECT * FROM orders WHERE id IN (${placeholders})`).bind(...orderIds).all();
+    orders = ordersResult.results || [];
+} catch (e: any) {
+    return new Response("Database Error: " + e.message, { status: 500 });
+}
+
+// Preserve selection order from URL
+const sortedOrders = orderIds
+    .map(id => orders.find(o => String(o.id) === String(id)))
+    .filter(Boolean);
+
+// Extract courier order IDs for booked orders
+const courierOrderIds = sortedOrders
+    .map(o => o.courier_order_id ? String(o.courier_order_id).trim() : "")
+    .filter(Boolean);
+
+// RS Portal data: original CSS + individual label HTML blocks
+let rsPortalCss = "";
+const rsLabelsByCourierId: Record<string, string> = {};
+
+if (courierOrderIds.length > 0) {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        
+        const bulkUrl = `https://portal.rscourier.pk/invoicehtml.php?order_id=${courierOrderIds.join("%2C")}&save_print=&print=1`;
+        const res = await fetch(bulkUrl, {
+            signal: controller.signal,
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        });
+        clearTimeout(timeout);
+        
+        if (res.ok) {
+            const rawHtml = await res.text();
+            
+            // 1. Extract the RS portal's original <style> block — use AS IS
+            const styleMatch = rawHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+            if (styleMatch) {
+                // Strip @page from RS CSS so our A4 Landscape @page is preserved
+                rsPortalCss = styleMatch[1].replace(/@page\s*\{[^}]*\}/gi, '');
+            }
+            
+            // 2. Extract individual label <div class="table_invoice">...</div> blocks
+            const labels = [...rawHtml.matchAll(/<div[^>]*class=["'][^"']*table_invoice[^"']*["'][\s\S]*?<\/table>\s*<\/div>/gi)];
+            
+            labels.forEach((match, idx) => {
+                let labelHtml = match[0];
+                
+                // Only fix: rewrite relative image paths so they load from the portal
+                labelHtml = labelHtml.replace(/src="assets\//g, 'src="https://portal.rscourier.pk/assets/');
+                labelHtml = labelHtml.replace(/src='assets\//g, "src='https://portal.rscourier.pk/assets/");
+                labelHtml = labelHtml.replace(/src="admin\/assets\//g, 'src="https://portal.rscourier.pk/admin/assets/');
+                labelHtml = labelHtml.replace(/src="vendor\//g, 'src="https://portal.rscourier.pk/vendor/');
+                
+                if (idx < courierOrderIds.length) {
+                    rsLabelsByCourierId[courierOrderIds[idx]] = labelHtml;
+                }
+            });
+        }
+    } catch (e) {
+        console.warn("Failed to fetch bulk RS HTML:", e);
+    }
+}
+
+// Build enriched orders with RS portal label HTML
+const enrichedOrders = sortedOrders.map(order => {
+    const cid = order.courier_order_id ? String(order.courier_order_id).trim() : "";
+    return {
+        ...order,
+        rsLabelHtml: cid ? (rsLabelsByCourierId[cid] || null) : null
+    };
+});
+
+// Grid: Strictly 8 labels per page (2 columns x 4 rows)
+const labelsPerPage = 8;
+
+const pages: any[][] = [];
+for (let i = 0; i < enrichedOrders.length; i += labelsPerPage) {
+    pages.push(enrichedOrders.slice(i, i + labelsPerPage));
+}
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Print Shipping Labels - Gionee Pakistan</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    
+    <!-- RS Portal Original CSS (Untouched & unaltered) -->
+    {rsPortalCss && <style is:inline set:html={rsPortalCss} />}
+
+    <style>
+        /* Base Reset & Grid Page Shell */
+        * { box-sizing: border-box; }
+        body {
+            background-color: #525659;
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        /* Toolbar (hidden when printing) */
+        .no-print-toolbar {
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: #1e293b;
+            color: white;
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2);
+        }
+        .no-print-toolbar .btn-print {
+            background: #f97316;
+            color: white;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 8px 18px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s ease;
+        }
+        .no-print-toolbar .btn-print:hover { background: #ea580c; }
+
+        /* A4 Landscape Page: 297mm x 210mm (Centered 2 cols x 4 rows) */
+        .print-page {
+            width: 297mm;
+            height: 210mm;
+            margin: 20px auto;
+            background: #ffffff;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+            padding: 8mm 12mm;
+            display: grid;
+            grid-template-columns: repeat(2, 520px);
+            grid-template-rows: repeat(4, 160px);
+            justify-content: center;
+            align-content: center;
+            gap: 8px 16px;
+            overflow: hidden;
+            page-break-after: always;
+            break-after: page;
+            box-sizing: border-box;
+        }
+
+        .print-page:last-child {
+            page-break-after: auto;
+            break-after: auto;
+        }
+
+        /* Each label cell: EXACT 520px x 160px */
+        .label-cell {
+            width: 520px;
+            height: 160px;
+            border: 1px dashed #94a3b8;
+            overflow: hidden;
+            position: relative;
+            background: #ffffff;
+            box-sizing: border-box;
+        }
+
+        /* Scaler: 2D scaled to fill 520px x 160px edge-to-edge with zero empty space */
+        .label-scaler {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 795px;
+            transform-origin: top left;
+            transform: scale(0.654, 0.50);
+        }
+
+        .table_invoice {
+            width: 795px !important;
+            margin: 0 !important;
+        }
+
+        /* Print Media Styles */
+        @media print {
+            html, body {
+                background: white !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                height: 100% !important;
+            }
+            .no-print-toolbar { display: none !important; }
+            @page {
+                size: A4 landscape;
+                margin: 0;
+            }
+            .print-page {
+                margin: 0 !important;
+                padding: 8mm 12mm !important;
+                box-shadow: none !important;
+                width: 297mm !important;
+                height: 210mm !important;
+                max-height: 210mm !important;
+                page-break-after: always !important;
+                break-after: page !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+            }
+            .print-page:last-child {
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+            }
+            .label-cell {
+                width: 520px !important;
+                height: 160px !important;
+                border: 1px dashed #94a3b8 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Top toolbar -->
+    <div class="no-print-toolbar">
+        <div style="display: flex; align-items: center; gap: 14px;">
+            <strong style="font-size: 15px; color: #f97316;">Gionee Logistics</strong>
+            <span style="font-size: 12px; color: #94a3b8;">
+                {sortedOrders.length} Label{sortedOrders.length > 1 ? "s" : ""} &bull; {pages.length} Page{pages.length > 1 ? "s" : ""} &bull; A4 Landscape (8 per Sheet)
+            </span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <button type="button" class="btn-print" onclick="window.print()">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                </svg>
+                <span>Print / Save as PDF</span>
+            </button>
+            <button type="button" onclick="window.close()" style="background: #334155; color: white; font-size: 12px; padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer;">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <!-- Label pages: 2x4 grid (8 labels per sheet) -->
+    <div id="printable-area">
+        {pages.map((pageOrders) => (
+            <div class="print-page">
+                {pageOrders.map((order) => {
+                    if (order.rsLabelHtml) {
+                        return (
+                            <div class="label-cell">
+                                <div class="label-scaler">
+                                    <Fragment set:html={order.rsLabelHtml} />
+                                </div>
+                            </div>
+                        );
+                    }
+                    return (
+                        <div class="label-cell" style="display: flex; align-items: center; justify-content: center; font-size: 13px; color: #64748b; font-family: sans-serif;">
+                            <div style="text-align: center;">
+                                <div style="font-weight: 700; font-size: 15px; color: #334155;">Order #{order.id}</div>
+                                <div style="margin-top: 4px;">No courier booking found</div>
+                                <div style="margin-top: 2px; font-size: 11px;">{order.customer_name} &bull; {order.city || 'Pakistan'}</div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        ))}
+    </div>
+
+    <script is:inline>
+        // Auto-fit labels precisely into the exact 520px x 160px cell (100% fill, zero empty space)
+        function autoFitLabels() {
+            document.querySelectorAll('.label-cell').forEach(cell => {
+                const scaler = cell.querySelector('.label-scaler');
+                if (!scaler) return;
+                const invoice = cell.querySelector('.table_invoice');
+                const naturalW = 795;
+                const naturalH = invoice ? invoice.scrollHeight : 300;
+                const scaleX = 520 / naturalW;
+                const scaleY = 160 / naturalH;
+                scaler.style.transform = `scale(${scaleX}, ${scaleY})`;
+            });
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', autoFitLabels);
+        } else {
+            autoFitLabels();
+        }
+        window.addEventListener('load', autoFitLabels);
+        window.addEventListener('resize', autoFitLabels);
+        window.addEventListener('beforeprint', autoFitLabels);
+
+        // Keyboard shortcut: Ctrl + P
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+                e.preventDefault();
+                window.print();
+            }
+        });
+    </script>
+</body>
+</html>

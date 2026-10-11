@@ -1,0 +1,98 @@
+---
+import OrganizationSchema from "./OrganizationSchema.astro";
+import WebSiteSchema from "./WebSiteSchema.astro";
+import WebPageSchema from "./WebPageSchema.astro";
+import ArticleSchema from "./ArticleSchema.astro";
+import CollectionPageSchema from "./CollectionPageSchema.astro";
+import FAQSchema from "./FAQSchema.astro";
+
+interface Props {
+    type?:
+        | "home"
+        | "contact"
+        | "about"
+        | "policy"
+        | "blog-index"
+        | "blog-post"
+        | "product"
+        | "default";
+    data?: any;
+    title?: string;
+    description?: string;
+    url?: string;
+    datePublished?: string;
+    dateModified?: string;
+}
+
+const {
+    type = "default",
+    data = {},
+    title,
+    description,
+    url = Astro.url.href,
+    datePublished,
+    dateModified,
+} = Astro.props;
+
+// Generate Breadcrumbs
+const pathname = new URL(url).pathname;
+const pathSegments = pathname.split("/").filter((segment) => segment);
+
+const breadcrumbList = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "name": "Breadcrumbs",
+    itemListElement: [
+        {
+            "@type": "ListItem",
+            position: 1,
+            name: "Home",
+            item: "https://sauvagedior.pk",
+        },
+        ...pathSegments.map((segment, index) => {
+            const position = index + 2;
+            const name = segment
+                .replace(/-/g, " ")
+                .replace(/\b\w/g, (l) => l.toUpperCase()); // Simple title case
+            const item = `https://sauvagedior.pk/${pathSegments
+                .slice(0, index + 1)
+                .join("/")}/`;
+            return {
+                "@type": "ListItem",
+                position,
+                name,
+                item,
+            };
+        }),
+    ],
+};
+---
+
+<!-- Global Breadcrumbs -->
+<script type="application/ld+json" set:html={JSON.stringify(breadcrumbList)} />
+
+<!-- Global Organization (included on all pages or specific ones? usually homepage + contact/about is enough, but user asked for "available on all other pages add webpage schema") --><!-- User asked for Organization Schema on "About Us" and "Contact Us" explicitly. Organization is good global too, but let's stick to request or best practice. Best practice is homepage + contact/about. -->{
+    (type === "home" || type === "about" || type === "contact") && (
+        <OrganizationSchema />
+    )
+}
+
+<!-- Specific Schemas -->
+{type === "home" && <WebSiteSchema />}
+{
+    (type === "default" ||
+        type === "policy" ||
+        type === "about" ||
+        type === "contact") && (
+        <WebPageSchema
+            title={title || ""}
+            description={description || ""}
+            url={url}
+            datePublished={datePublished}
+            dateModified={dateModified}
+        />
+    )
+}
+{type === "blog-index" && <CollectionPageSchema posts={data?.posts} />}
+{type === "blog-post" && <ArticleSchema data={data} />}
+{data?.faqs && <FAQSchema faqs={data.faqs} />}

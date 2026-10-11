@@ -1,0 +1,682 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import Pagination from "../../../components/admin/Pagination.astro";
+import ColumnSelector from "../../../components/admin/ColumnSelector.astro";
+
+const customerColumns = [
+    { id: "customer", label: "Customer & City", defaultVisible: true },
+    { id: "risk", label: "Risk & Intelligence", defaultVisible: true },
+    { id: "orders", label: "Orders & Returns", defaultVisible: true },
+    { id: "return_rate", label: "Return Rate", defaultVisible: true },
+    { id: "ltv", label: "Lifetime Value", defaultVisible: true },
+    { id: "last_order", label: "Last Order", defaultVisible: true },
+    { id: "actions", label: "Actions", defaultVisible: true },
+];
+
+const seoTitle = "Customers CRM & Risk Profiles - Dior Sauvage Pakistan";
+
+const url = new URL(Astro.request.url);
+const search = url.searchParams.get("search") || "";
+const riskFilter = url.searchParams.get("risk") || "";
+const returnFilter = url.searchParams.get("returns") || "";
+const blacklistFilter = url.searchParams.get("blacklist") || "";
+const cityFilter = url.searchParams.get("city") || "";
+
+const page = parseInt(url.searchParams.get("page") || "1");
+const limit = parseInt(url.searchParams.get("limit") || "20");
+const offset = (page - 1) * limit;
+
+// Sorting
+const sortBy = url.searchParams.get("sort") || "last_order_at";
+const sortOrder = url.searchParams.get("order") === "asc" ? "asc" : "desc";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let customers: any[] = [];
+let topCities: string[] = [];
+let errorMsg = "";
+let successMsg = "";
+let totalItems = 0;
+let totalPages = 0;
+
+let stats = {
+    totalCustomers: 0,
+    vipCount: 0,
+    goodCount: 0,
+    riskyCount: 0,
+    serialCount: 0,
+    returnedCustomersCount: 0,
+    blacklistedCount: 0,
+    totalRevenue: 0,
+};
+
+// Handle POST actions (fast blacklist / whitelist toggling from CRM list)
+if (Astro.request.method === "POST" && db) {
+    try {
+        const formData = await Astro.request.formData();
+        const action = formData.get("action")?.toString();
+
+        if (action === "toggle_blacklist") {
+            const customerPhone = formData.get("customer_phone")?.toString();
+            const currentState = formData.get("current_state")?.toString() === "1";
+            const newState = currentState ? 0 : 1;
+            const reason = formData.get("reason")?.toString() || (newState ? "Flagged via Customers CRM list" : "");
+
+            if (customerPhone) {
+                await db.prepare(`
+                    UPDATE customer_profiles 
+                    SET blacklisted = ?, blacklist_reason = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE phone = ?
+                `).bind(newState, reason, customerPhone).run();
+                successMsg = `Customer ${customerPhone} ${newState ? 'has been blacklisted.' : 'has been removed from blacklist.'}`;
+            }
+        }
+    } catch (e: any) {
+        errorMsg = "Action error: " + e.message;
+    }
+}
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing.";
+} else {
+    try {
+        // 1. Fetch KPI summary stats from customer_profiles
+        const statsResult: any = await db.prepare(`
+            SELECT 
+                COUNT(*) as totalCustomers,
+                SUM(CASE WHEN risk_tier = 'VIP' THEN 1 ELSE 0 END) as vipCount,
+                SUM(CASE WHEN risk_tier = 'Good' THEN 1 ELSE 0 END) as goodCount,
+                SUM(CASE WHEN risk_tier = 'Risky' THEN 1 ELSE 0 END) as riskyCount,
+                SUM(CASE WHEN risk_tier = 'Serial Returner' THEN 1 ELSE 0 END) as serialCount,
+                SUM(CASE WHEN total_returned > 0 THEN 1 ELSE 0 END) as returnedCustomersCount,
+                SUM(CASE WHEN blacklisted = 1 THEN 1 ELSE 0 END) as blacklistedCount,
+                SUM(lifetime_value) as totalRevenue
+            FROM customer_profiles
+        `).first();
+
+        if (statsResult) {
+            stats.totalCustomers = statsResult.totalCustomers || 0;
+            stats.vipCount = statsResult.vipCount || 0;
+            stats.goodCount = statsResult.goodCount || 0;
+            stats.riskyCount = statsResult.riskyCount || 0;
+            stats.serialCount = statsResult.serialCount || 0;
+            stats.returnedCustomersCount = statsResult.returnedCustomersCount || 0;
+            stats.blacklistedCount = statsResult.blacklistedCount || 0;
+            stats.totalRevenue = statsResult.totalRevenue || 0;
+        }
+
+        // 2. Fetch distinct top cities for filter dropdown
+        const { results: citiesResult } = await db.prepare(`
+            SELECT DISTINCT TRIM(city) as clean_city 
+            FROM customer_profiles 
+            WHERE city IS NOT NULL AND TRIM(city) != '' 
+            GROUP BY LOWER(TRIM(city)) 
+            HAVING COUNT(*) >= 2 
+            ORDER BY COUNT(*) DESC 
+            LIMIT 30
+        `).all();
+        topCities = (citiesResult || []).map((c: any) => c.clean_city).filter(Boolean);
+
+        // 3. Build dynamic filter conditions
+        let whereConditions: string[] = [];
+        let queryParams: any[] = [];
+
+        if (search) {
+            whereConditions.push(`(phone LIKE ? OR name LIKE ? OR city LIKE ?)`);
+            const searchPattern = `%${search}%`;
+            queryParams.push(searchPattern, searchPattern, searchPattern);
+        }
+
+        if (riskFilter) {
+            whereConditions.push(`risk_tier = ?`);
+            queryParams.push(riskFilter);
+        }
+
+        if (returnFilter === "none") {
+            whereConditions.push(`total_returned = 0`);
+        } else if (returnFilter === "returned") {
+            whereConditions.push(`total_returned > 0`);
+        } else if (returnFilter === "high_return") {
+            whereConditions.push(`return_rate >= 50 AND total_orders > 1`);
+        }
+
+        if (blacklistFilter === "1") {
+            whereConditions.push(`blacklisted = 1`);
+        } else if (blacklistFilter === "0") {
+            whereConditions.push(`blacklisted = 0`);
+        }
+
+        if (cityFilter) {
+            whereConditions.push(`LOWER(TRIM(city)) = LOWER(TRIM(?))`);
+            queryParams.push(cityFilter);
+        }
+
+        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
+
+        // 4. Fetch total items for pagination
+        const countQuery = `
+            SELECT COUNT(*) as total
+            FROM customer_profiles
+            ${whereClause}
+        `;
+        const totalResult: any = await db.prepare(countQuery).bind(...queryParams).first();
+        totalItems = totalResult?.total || 0;
+        totalPages = Math.ceil(totalItems / limit);
+
+        // 5. Fetch paginated customer records
+        const allowedSortColumns: Record<string, string> = {
+            last_order_at: "last_order_at",
+            lifetime_value: "lifetime_value",
+            total_orders: "total_orders",
+            total_returned: "total_returned",
+            return_rate: "return_rate",
+        };
+        const activeSortCol = allowedSortColumns[sortBy] || "last_order_at";
+        const activeOrder = sortOrder === "asc" ? "ASC" : "DESC";
+
+        const dataQuery = `
+            SELECT 
+                phone,
+                name,
+                city,
+                email,
+                total_orders,
+                total_delivered,
+                total_returned,
+                total_cancelled,
+                total_in_transit,
+                return_rate,
+                lifetime_value,
+                risk_tier,
+                blacklisted,
+                blacklist_reason,
+                admin_notes,
+                first_order_at,
+                last_order_at
+            FROM customer_profiles
+            ${whereClause}
+            ORDER BY ${activeSortCol} ${activeOrder}
+            LIMIT ? OFFSET ?
+        `;
+
+        const { results } = await db.prepare(dataQuery).bind(...queryParams, limit, offset).all();
+        customers = results || [];
+
+    } catch (e: any) {
+        errorMsg = "Failed to load customers: " + e.message;
+        console.error(e);
+    }
+}
+
+// Helper to render risk tier badge
+function getRiskBadge(tier: string, blacklisted: number) {
+    if (blacklisted === 1) {
+        return {
+            label: "Blacklisted",
+            class: "bg-black text-white border-black font-semibold",
+            dot: "bg-red-400 animate-pulse"
+        };
+    }
+    switch (tier) {
+        case "VIP":
+            return {
+                label: "VIP Buyer",
+                class: "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold ring-1 ring-emerald-200",
+                dot: "bg-emerald-500"
+            };
+        case "Good":
+            return {
+                label: "Good Buyer",
+                class: "bg-blue-50 text-blue-700 border-blue-200 font-medium",
+                dot: "bg-blue-500"
+            };
+        case "Risky":
+            return {
+                label: "High Return Risk",
+                class: "bg-orange-50 text-orange-800 border-orange-200 font-semibold",
+                dot: "bg-orange-500"
+            };
+        case "Serial Returner":
+            return {
+                label: "Serial Returner",
+                class: "bg-red-50 text-red-700 border-red-300 font-bold ring-1 ring-red-200",
+                dot: "bg-red-600 animate-pulse"
+            };
+        default:
+            return {
+                label: "Neutral",
+                class: "bg-gray-50 text-gray-700 border-gray-200",
+                dot: "bg-gray-400"
+            };
+    }
+}
+---
+
+<AdminLayout title={seoTitle} activePage="customers">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+        <div>
+            <div class="flex items-center gap-3">
+                <h1 class="text-3xl font-semibold text-gray-900 tracking-tight">Customers CRM</h1>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-brand-orange/10 text-brand-orange border border-brand-orange/20">
+                    <Icon name="shield" class="w-3.5 h-3.5 text-brand-orange" />
+                    <span>Return Shield Enabled</span>
+                </span>
+            </div>
+            <p class="text-gray-500 mt-1 text-sm">Real-time buyer intelligence, return behavior analytics, and blacklist controls.</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="window.location.reload()" class="px-3.5 py-2 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg shadow-sm text-sm font-medium transition-all flex items-center gap-2 cursor-pointer" title="Refresh">
+                <Icon name="refresh-cw" class="w-4 h-4 text-gray-500" />
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    {/* Error Banner */}
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-6 flex items-start gap-3">
+            <div class="bg-red-100 text-red-800 p-1.5 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4 text-red-700" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {/* Success Banner */}
+    {successMsg && (
+        <div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded-xl mb-6 flex items-start gap-3">
+            <div class="bg-green-100 text-green-800 p-1.5 rounded-full shrink-0">
+                <Icon name="check" class="w-4 h-4 text-green-700" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Success</p>
+                <p class="text-xs mt-0.5">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Top KPI Stats Grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <!-- 1. Total Customers -->
+        <a href="/admin/customers/" class="bg-white p-4 rounded-xl border border-gray-200 hover:border-gray-300 shadow-sm transition-all hover:shadow flex flex-col justify-between group">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Total Buyers</span>
+                <span class="p-1 rounded-md bg-gray-50 text-gray-500 group-hover:text-brand-orange transition-colors">
+                    <Icon name="users" class="w-4 h-4" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-2xl font-bold text-gray-900">{stats.totalCustomers.toLocaleString()}</span>
+                <span class="text-[10px] text-gray-400 font-medium">Unique</span>
+            </div>
+        </a>
+
+        <!-- 2. Clean / Good Buyers -->
+        <a href="/admin/customers/?risk=Good" class="bg-white p-4 rounded-xl border border-blue-100 hover:border-blue-200 shadow-sm transition-all hover:shadow flex flex-col justify-between group">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-blue-700 uppercase tracking-wider">Good & VIP</span>
+                <span class="p-1 rounded-md bg-blue-50 text-blue-600">
+                    <Icon name="check-circle" class="w-4 h-4" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-2xl font-bold text-blue-900">{(stats.goodCount + stats.vipCount).toLocaleString()}</span>
+                <span class="text-[10px] text-emerald-600 font-medium">{stats.vipCount} VIP</span>
+            </div>
+        </a>
+
+        <!-- 3. Repeat Returners -->
+        <a href="/admin/customers/?returns=returned" class="bg-white p-4 rounded-xl border border-amber-200 hover:border-amber-300 shadow-sm transition-all hover:shadow flex flex-col justify-between group">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">With Returns</span>
+                <span class="p-1 rounded-md bg-amber-50 text-amber-600">
+                    <Icon name="arrow-uturn-left" class="w-4 h-4" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-2xl font-bold text-amber-900">{stats.returnedCustomersCount.toLocaleString()}</span>
+                <span class="text-[10px] text-amber-700 font-medium">{Math.round((stats.returnedCustomersCount / (stats.totalCustomers || 1)) * 100)}%</span>
+            </div>
+        </a>
+
+        <!-- 4. High Risk / Serial -->
+        <a href="/admin/customers/?risk=Serial+Returner" class="bg-white p-4 rounded-xl border border-red-200 hover:border-red-300 shadow-sm transition-all hover:shadow flex flex-col justify-between group">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-red-700 uppercase tracking-wider">Serial / Risky</span>
+                <span class="p-1 rounded-md bg-red-50 text-red-600">
+                    <Icon name="alert-triangle" class="w-4 h-4" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-2xl font-bold text-red-900">{(stats.serialCount + stats.riskyCount).toLocaleString()}</span>
+                <span class="text-[10px] text-red-600 font-medium">{stats.serialCount} Serial</span>
+            </div>
+        </a>
+
+        <!-- 5. Blacklisted -->
+        <a href="/admin/customers/?blacklist=1" class="bg-white p-4 rounded-xl border border-gray-300 hover:border-black shadow-sm transition-all hover:shadow flex flex-col justify-between group">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-gray-700 uppercase tracking-wider">Blacklisted</span>
+                <span class="p-1 rounded-md bg-gray-100 text-gray-800">
+                    <Icon name="ban" class="w-4 h-4 text-red-600" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-2xl font-bold text-gray-900">{stats.blacklistedCount.toLocaleString()}</span>
+                <span class="text-[10px] text-gray-500 font-medium">Blocked</span>
+            </div>
+        </a>
+
+        <!-- 6. Total Lifetime Value -->
+        <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col justify-between">
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Total LTV</span>
+                <span class="p-1 rounded-md bg-brand-orange/10 text-brand-orange">
+                    <Icon name="banknote" class="w-4 h-4" />
+                </span>
+            </div>
+            <div class="mt-2 flex items-baseline justify-between">
+                <span class="text-xl font-extrabold text-gray-900">{(stats.totalRevenue / 1000).toFixed(0)}k</span>
+                <span class="text-[10px] text-gray-500 font-mono">PKR {stats.totalRevenue.toLocaleString()}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters Bar -->
+    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-6">
+        <form method="get" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <!-- Search -->
+            <div class="relative lg:col-span-2">
+                <input 
+                    type="text" 
+                    name="search" 
+                    value={search}
+                    placeholder="Search name, phone, or city..." 
+                    class="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-xs text-gray-800 bg-white placeholder-gray-400"
+                />
+                <div class="absolute left-3 top-2.5 text-gray-400">
+                    <Icon name="search" class="w-3.5 h-3.5" />
+                </div>
+            </div>
+
+            <!-- Risk Tier Filter -->
+            <div>
+                <select name="risk" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-xs text-gray-800 bg-white admin-select">
+                    <option value="">All Risk Tiers</option>
+                    <option value="VIP" selected={riskFilter === "VIP"}>VIP (Proven Buyers)</option>
+                    <option value="Good" selected={riskFilter === "Good"}>Good Buyers</option>
+                    <option value="Risky" selected={riskFilter === "Risky"}>High Return Risk</option>
+                    <option value="Serial Returner" selected={riskFilter === "Serial Returner"}>Serial Returners</option>
+                    <option value="Neutral" selected={riskFilter === "Neutral"}>Neutral (1 Order)</option>
+                </select>
+            </div>
+
+            <!-- Return Status Filter -->
+            <div>
+                <select name="returns" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-xs text-gray-800 bg-white admin-select">
+                    <option value="">All Return Records</option>
+                    <option value="none" selected={returnFilter === "none"}>Clean (0 Returns)</option>
+                    <option value="returned" selected={returnFilter === "returned"}>Has Returns (&gt; 0)</option>
+                    <option value="high_return" selected={returnFilter === "high_return"}>High Return Rate (&ge; 50%)</option>
+                </select>
+            </div>
+
+            <!-- City Filter -->
+            <div>
+                <select name="city" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-xs text-gray-800 bg-white admin-select">
+                    <option value="">All Cities ({topCities.length})</option>
+                    {topCities.map((c) => (
+                        <option value={c} selected={cityFilter.toLowerCase() === c.toLowerCase()}>{c}</option>
+                    ))}
+                </select>
+            </div>
+
+            <!-- Sort By -->
+            <div>
+                <select name="sort" class="w-full px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-xs text-gray-800 bg-white admin-select">
+                    <option value="last_order_at" selected={sortBy === "last_order_at"}>Sort: Recent Order</option>
+                    <option value="lifetime_value" selected={sortBy === "lifetime_value"}>Sort: Highest LTV</option>
+                    <option value="total_orders" selected={sortBy === "total_orders"}>Sort: Most Orders</option>
+                    <option value="total_returned" selected={sortBy === "total_returned"}>Sort: Most Returns</option>
+                    <option value="return_rate" selected={sortBy === "return_rate"}>Sort: Return Rate %</option>
+                </select>
+            </div>
+
+            <!-- Row 2 Controls: Blacklist & Actions -->
+            <div class="col-span-full flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-100">
+                <div class="flex items-center gap-3">
+                    <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Status:</span>
+                    <label class="inline-flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                        <input type="radio" name="blacklist" value="" checked={!blacklistFilter} class="text-brand-orange focus:ring-brand-orange" />
+                        All
+                    </label>
+                    <label class="inline-flex items-center gap-1.5 text-xs text-emerald-700 cursor-pointer font-medium">
+                        <input type="radio" name="blacklist" value="0" checked={blacklistFilter === "0"} class="text-emerald-600 focus:ring-emerald-500" />
+                        Active Only
+                    </label>
+                    <label class="inline-flex items-center gap-1.5 text-xs text-red-700 cursor-pointer font-semibold">
+                        <input type="radio" name="blacklist" value="1" checked={blacklistFilter === "1"} class="text-red-600 focus:ring-red-500" />
+                        Blacklisted Only
+                    </label>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button type="submit" class="px-4 py-2 bg-brand-orange hover:bg-brand-orange/95 text-white font-semibold rounded-lg text-xs transition-colors shadow-sm active:scale-[0.98] cursor-pointer">
+                        Apply Filters
+                    </button>
+                    {(search || riskFilter || returnFilter || blacklistFilter || cityFilter || sortBy !== "last_order_at") && (
+                        <a href="/admin/customers/" class="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg text-xs transition-colors" title="Clear all filters">
+                            Reset All
+                        </a>
+                    )}
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Customers Intelligence Table -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3 bg-gray-50/50">
+            <div class="flex items-center gap-2">
+                <h2 class="text-sm font-bold text-gray-900 uppercase tracking-wider">Customer Profiles</h2>
+                <span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-gray-200 text-gray-700">{totalItems} Results</span>
+            </div>
+            <div class="flex items-center gap-3">
+                <ColumnSelector tableId="customers-table" storageKey="crm_customer_cols" columns={customerColumns} />
+                <div class="text-xs text-gray-500">
+                    Page {page} of {totalPages || 1}
+                </div>
+            </div>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table id="customers-table" class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-50 border-b border-gray-100 text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
+                        <th data-col="customer" class="px-4 py-3.5">Customer & City</th>
+                        <th data-col="risk" class="px-4 py-3.5">Risk & Intelligence</th>
+                        <th data-col="orders" class="px-4 py-3.5 text-center">Orders & Returns</th>
+                        <th data-col="return_rate" class="px-4 py-3.5 text-center">Return Rate</th>
+                        <th data-col="ltv" class="px-4 py-3.5 text-right">Lifetime Value</th>
+                        <th data-col="last_order" class="px-4 py-3.5 text-right">Last Order</th>
+                        <th data-col="actions" class="px-4 py-3.5 text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-sm text-gray-800">
+                    {customers.length === 0 ? (
+                        <tr>
+                            <td colspan="7" class="p-12 text-center text-gray-500">
+                                <div class="max-w-sm mx-auto flex flex-col items-center">
+                                    <div class="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 mb-3">
+                                        <Icon name="users" class="w-6 h-6" />
+                                    </div>
+                                    <p class="font-semibold text-gray-800 text-base">No Customers Matched</p>
+                                    <p class="text-xs text-gray-400 mt-1">Try broadening your search keyword or clearing the risk/return filters.</p>
+                                    <a href="/admin/customers/" class="mt-4 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors">
+                                        Clear All Filters
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                    ) : (
+                        customers.map((c) => {
+                            const badge = getRiskBadge(c.risk_tier, c.blacklisted);
+                            return (
+                                <tr class={`hover:bg-gray-50/70 transition-colors ${c.blacklisted === 1 ? 'bg-red-50/30' : ''}`}>
+                                    {/* Customer & City */}
+                                    <td data-col="customer" class="px-4 py-3.5">
+                                        <div class="flex items-start gap-2.5">
+                                            <div class="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5 border border-gray-200">
+                                                {(c.name || "C").charAt(0).toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <div class="font-semibold text-gray-900 hover:text-brand-orange transition-colors">
+                                                    <a href={`/admin/customers/${encodeURIComponent(c.phone)}/`}>
+                                                        {c.name || "Unknown Customer"}
+                                                    </a>
+                                                </div>
+                                                <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
+                                                    <span class="font-mono text-gray-600 font-medium">{c.phone}</span>
+                                                    {c.city && (
+                                                        <>
+                                                            <span class="text-gray-300">•</span>
+                                                            <span class="inline-flex items-center gap-1 text-gray-600">
+                                                                <Icon name="map-pin" class="w-3 h-3 text-gray-400" />
+                                                                <span>{c.city}</span>
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                                {c.email && (
+                                                    <div class="text-[11px] text-gray-400 truncate max-w-xs">{c.email}</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </td>
+
+                                    {/* Risk & Intelligence */}
+                                    <td data-col="risk" class="px-4 py-3.5">
+                                        <div class="flex flex-col gap-1 items-start">
+                                            <span class={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${badge.class}`}>
+                                                <span class={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                                                {badge.label}
+                                            </span>
+                                            {c.blacklisted === 1 && c.blacklist_reason && (
+                                                <span class="text-[10px] text-red-600 font-medium max-w-xs truncate" title={c.blacklist_reason}>
+                                                    Reason: {c.blacklist_reason}
+                                                </span>
+                                            )}
+                                            {c.total_returned > 0 && c.blacklisted !== 1 && (
+                                                <span class="text-[10px] text-amber-700 font-medium flex items-center gap-1">
+                                                    <Icon name="alert-triangle" class="w-3 h-3 text-amber-600" />
+                                                    <span>{c.total_returned} {c.total_returned === 1 ? 'return' : 'returns'} recorded</span>
+                                                </span>
+                                            )}
+                                        </div>
+                                    </td>
+
+                                    {/* Orders Breakdown */}
+                                    <td data-col="orders" class="px-4 py-3.5 text-center">
+                                        <div class="inline-flex items-center gap-1.5 text-xs">
+                                            <span class="font-bold text-gray-900" title="Total Orders">{c.total_orders}</span>
+                                            <span class="text-gray-400">orders</span>
+                                            <span class="text-gray-300">|</span>
+                                            <span class="text-emerald-700 font-medium" title="Delivered">{c.total_delivered || 0} del</span>
+                                            <span class="text-gray-300">|</span>
+                                            <span class={`${c.total_returned > 0 ? 'text-red-600 font-bold' : 'text-gray-400'}`} title="Returned">
+                                                {c.total_returned || 0} ret
+                                            </span>
+                                        </div>
+                                    </td>
+
+                                    {/* Return Rate */}
+                                    <td data-col="return_rate" class="px-4 py-3.5 text-center">
+                                        {c.total_orders > 0 ? (
+                                            <div class="flex flex-col items-center">
+                                                <span class={`text-xs font-bold ${
+                                                    c.return_rate >= 50 ? 'text-red-600' :
+                                                    c.return_rate > 0 ? 'text-amber-600' : 'text-emerald-600'
+                                                }`}>
+                                                    {Math.round(c.return_rate)}%
+                                                </span>
+                                                <div class="w-16 bg-gray-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                                                    <div 
+                                                        class={`h-full rounded-full ${
+                                                            c.return_rate >= 50 ? 'bg-red-500' :
+                                                            c.return_rate > 0 ? 'bg-amber-400' : 'bg-emerald-500'
+                                                        }`}
+                                                        style={`width: ${Math.min(100, Math.max(5, c.return_rate))}%`}
+                                                    ></div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <span class="text-xs text-gray-400">0%</span>
+                                        )}
+                                    </td>
+
+                                    {/* Lifetime Value */}
+                                    <td data-col="ltv" class="px-4 py-3.5 text-right font-medium text-gray-900">
+                                        <div class="text-xs font-bold">
+                                            PKR {c.lifetime_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                        </div>
+                                    </td>
+
+                                    {/* Last Order Date */}
+                                    <td data-col="last_order" class="px-4 py-3.5 text-right text-xs text-gray-500">
+                                        {c.last_order_at ? (
+                                            <span>
+                                                {new Date(c.last_order_at.replace(' ', 'T') + "Z").toLocaleDateString('en-PK', { year: 'numeric', month: 'short', day: 'numeric' })}
+                                            </span>
+                                        ) : (
+                                            <span class="text-gray-400">N/A</span>
+                                        )}
+                                    </td>
+
+                                    {/* Actions */}
+                                    <td data-col="actions" class="px-4 py-3.5 text-center">
+                                        <div class="flex items-center justify-center gap-1.5">
+                                            <a 
+                                                href={`/admin/customers/${encodeURIComponent(c.phone)}/`} 
+                                                class="px-2.5 py-1 text-xs font-semibold text-brand-orange bg-brand-orange/10 hover:bg-brand-orange hover:text-white rounded-md transition-colors"
+                                                title="View Customer Profile"
+                                            >
+                                                Details
+                                            </a>
+                                            <form method="POST" class="inline" onsubmit="return confirm('Are you sure you want to toggle blacklist status for this customer?');">
+                                                <input type="hidden" name="action" value="toggle_blacklist" />
+                                                <input type="hidden" name="customer_phone" value={c.phone} />
+                                                <input type="hidden" name="current_state" value={c.blacklisted} />
+                                                <button 
+                                                    type="submit" 
+                                                    class={`p-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                                                        c.blacklisted === 1 
+                                                            ? 'bg-red-100 text-red-700 hover:bg-red-200' 
+                                                            : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-700'
+                                                    }`}
+                                                    title={c.blacklisted === 1 ? "Unblock / Whitelist" : "Blacklist Buyer"}
+                                                >
+                                                    <Icon name={c.blacklisted === 1 ? "ban" : "shield"} class="w-3.5 h-3.5" />
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })
+                    )}
+                </tbody>
+            </table>
+        </div>
+        
+        {totalItems > 0 && (
+            <div class="border-t border-gray-100 p-4">
+                <Pagination currentPage={page} totalPages={totalPages} totalItems={totalItems} limit={limit} />
+            </div>
+        )}
+    </div>
+</AdminLayout>

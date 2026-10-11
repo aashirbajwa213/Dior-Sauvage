@@ -1,0 +1,44 @@
+---
+interface Props {
+    price: number;
+    originalPrice?: number;
+    currency?: string;
+    size?: "sm" | "md" | "lg" | "xl" | "2xl" | "3xl";
+    class?: string;
+}
+
+const {
+    price,
+    originalPrice,
+    currency = "PKR",
+    size = "md",
+    class: className,
+} = Astro.props;
+
+const sizeStyles = {
+    sm: "text-base",
+    md: "text-base",
+    lg: "text-xl md:text-2xl",
+    xl: "text-2xl md:text-3xl font-black",
+    "2xl": "text-3xl md:text-4xl font-black",
+    "3xl": "text-[2rem] font-black tracking-tighter", // For main product page
+};
+
+const formatPrice = (amount: number) => {
+    return amount.toLocaleString("en-PK");
+};
+---
+
+<div class:list={["flex flex-col justify-center", className]}>
+    {
+        originalPrice && (
+            <span class:list={["text-gray-500 line-through decoration-gray-500 whitespace-nowrap", size === "3xl" ? "text-base font-medium" : "text-[0.675rem]"]}>
+                {currency}&nbsp;{formatPrice(originalPrice)}
+            </span>
+        )
+    }
+    <span class:list={["font-black leading-tight whitespace-nowrap", className?.includes("text-") ? "" : (size === "3xl" ? "text-brand-orange" : "text-gray-900"), sizeStyles[size]]}>
+        {currency}&nbsp;{formatPrice(price)}
+    </span>
+</div>
+

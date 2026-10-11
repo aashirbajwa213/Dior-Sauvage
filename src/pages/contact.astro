@@ -1,0 +1,245 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import Button from "../components/ui/Button.astro";
+import Icon from "../components/ui/Icon.astro";
+import PageHeader from "../components/PageHeader.astro";
+import { getAllSettings } from "../utils/settings";
+
+const seoTitle = "Contact Dior Sauvage Pakistan - Support & Customer Service";
+const seoDescription =
+    "Contact Dior Sauvage Pakistan customer support. WhatsApp, Email, and assistance for order tracking, batch code verification, and delivery inquiries.";
+
+// Support both standard and Cloudflare-style variable names
+const runtimeEnv = Astro.locals.runtime?.env;
+const siteKey =
+    runtimeEnv?.SITE_KEY ||
+    runtimeEnv?.PUBLIC_TURNSTILE_SITE_KEY ||
+    import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ||
+    import.meta.env.SITE_KEY;
+
+const db = runtimeEnv?.DB;
+let whatsappNumber = "923112390620";
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        if (settings.public_whatsapp_number) {
+            whatsappNumber = settings.public_whatsapp_number;
+        }
+    } catch (e) {
+        console.error("Failed to load settings in Contact Page", e);
+    }
+}
+const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.substring(2, 5)} ${whatsappNumber.substring(5)}`;
+
+---
+
+<MainLayout title={seoTitle} description={seoDescription} schemaType="contact">
+    <PageHeader
+        title="Contact Us"
+        tagline="We're here to help. Reach out to us for any questions about your order or our authentic fragrances."
+    />
+
+    <div class="container mx-auto px-4 py-16 max-w-6xl">
+        <div class="grid md:grid-cols-2 gap-12">
+            <div class="space-y-8">
+                <h2 class="text-2xl font-bold text-gray-900">Get in Touch</h2>
+
+                <div class="flex items-start gap-4">
+                    <div
+                        class="w-12 h-12 rounded-lg bg-green-100 flex items-center justify-center text-green-600 shrink-0"
+                    >
+                        <Icon name="phone" class="w-6 h-6" />
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 mb-1">
+                            WhatsApp Support
+                        </h3>
+                        <p class="text-gray-600 mb-2">
+                            Fastest response time (10am - 8pm)
+                        </p>
+                        <a
+                            href={`https://wa.me/${whatsappNumber}?text=Hello%20Sauvage%20Dior%20Pakistan.`}
+                            class="font-mono text-lg font-medium text-gray-900 hover:text-brand-orange transition-colors"
+                        >
+                            {formattedWhatsapp}
+                        </a>
+                    </div>
+                </div>
+
+                <div class="flex items-start gap-4">
+                    <div
+                        class="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600 shrink-0"
+                    >
+                        <Icon name="mail" class="w-6 h-6" />
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 mb-1">Email Us</h3>
+                        <p class="text-gray-600 mb-2">
+                            For batch inquiries & bulk collector orders
+                        </p>
+                        <a
+                            href="mailto:support@sauvagedior.pk"
+                            class="font-mono text-lg font-medium text-gray-900 hover:text-brand-orange transition-colors"
+                        >
+                            support@sauvagedior.pk
+                        </a>
+                    </div>
+                </div>
+
+                <div
+                    class="mt-8 p-6 bg-gray-50 rounded-xl border border-gray-200"
+                >
+                    <h3 class="font-bold text-gray-900 mb-2">Order Tracking</h3>
+                    <p class="text-gray-600 text-sm mb-4">
+                        Please include your Order ID # in your message for
+                        faster resolution.
+                    </p>
+                </div>
+            </div>
+
+            <div
+                class="bg-white p-8 rounded-2xl shadow-sm border border-gray-200"
+            >
+                <h2 class="text-2xl font-bold text-gray-900 mb-6">
+                    Send a Message
+                </h2>
+                <form id="contact-form" class="space-y-4">
+                    <div>
+                        <label
+                            for="name"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Full Name</label
+                        >
+                        <input
+                            type="text"
+                            id="name"
+                            name="name"
+                            class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-orange focus:border-brand-orange outline-none transition-all"
+                            placeholder="Your Full Name"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label
+                            for="email"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Email Address</label
+                        >
+                        <input
+                            type="email"
+                            id="email"
+                            name="email"
+                            class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-orange focus:border-brand-orange outline-none transition-all"
+                            placeholder="support@gionee.com.pk"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label
+                            for="subject"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Subject</label
+                        >
+                        <select
+                            id="subject"
+                            name="subject"
+                            class="w-full px-4 pr-10 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-orange focus:border-brand-orange outline-none transition-all appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20stroke%3D%22%236b7280%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%221.5%22%20d%3D%22m6%208%204%204%204-4%22%2F%3E%3C%2Fsvg%3E')] bg-[length:1.25rem_1.25rem] bg-[right_0.5rem_center] bg-no-repeat"
+                            required
+                        >
+                            <option value="General Inquiry"
+                                >General Inquiry</option
+                            >
+                            <option value="Order Status">Order Status</option>
+                            <option value="Warranty Claim"
+                                >Warranty Claim</option
+                            >
+                        </select>
+                    </div>
+                    <div>
+                        <label
+                            for="message"
+                            class="block text-sm font-medium text-gray-700 mb-1"
+                            >Message</label
+                        >
+                        <textarea
+                            id="message"
+                            name="message"
+                            rows="4"
+                            class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-orange focus:border-brand-orange outline-none transition-all"
+                            placeholder="How can we help you?"
+                            required></textarea>
+                    </div>
+                    {/* Turnstile Widget */}
+                    <div
+                        class="cf-turnstile"
+                        data-sitekey={siteKey}
+                        data-response-field-name="turnstileToken"
+                    >
+                    </div>
+                    {/* Fallback for missing key */}
+                    <script
+                        is:inline
+                        define:vars={{
+                            key: siteKey,
+                        }}
+                    >
+                        if (!key) {
+                            console.error("Turnstile Site Key is missing!");
+                            const el = document.querySelector(".cf-turnstile");
+                            if (el)
+                                el.innerHTML =
+                                    '<p class="text-red-500 text-sm">Error: Captcha Configuration Missing (SITE_KEY)</p>';
+                        }
+                    </script>
+                    <Button type="submit" id="submit-btn" class="w-full"
+                        >Send Message</Button
+                    >
+                </form>
+        </div>
+    </div>
+
+    <script>
+        import { actions } from "astro:actions";
+
+        const form = document.getElementById("contact-form") as HTMLFormElement;
+        const btn = document.getElementById("submit-btn") as HTMLButtonElement;
+
+        form?.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const originalText = btn.innerHTML; // Capture up front
+            const formData = new FormData(form);
+            const token = formData.get("turnstileToken");
+            if (!token) {
+                alert("Please complete the captcha.");
+                btn.disabled = false;
+                // btn.innerHTML = originalText; // It hasn't changed yet, so strictly not needed, but safe.
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = "Sending...";
+
+            try {
+                const { data, error } = await actions.contact(formData);
+                if (error) {
+                    alert("Error sending message: " + error.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                } else {
+                    btn.innerHTML = "Message Sent!";
+                    btn.classList.add("bg-green-600");
+                    form.reset();
+                    setTimeout(() => {
+                        btn.disabled = false;
+                        btn.innerHTML = originalText;
+                        btn.classList.remove("bg-green-600");
+                    }, 3000);
+                }
+            } catch (err) {
+                alert("Something went wrong. Please try again.");
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        });
+    </script>
+</MainLayout>

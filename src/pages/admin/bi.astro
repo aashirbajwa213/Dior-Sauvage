@@ -1,0 +1,599 @@
+---
+import AdminLayout from "../../layouts/AdminLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+import ColumnSelector from "../../components/admin/ColumnSelector.astro";
+import { getAllSettings } from "../../utils/settings";
+
+const cityColumns = [
+    { id: "city", label: "City", defaultVisible: true },
+    { id: "total_orders", label: "Total Orders", defaultVisible: true },
+    { id: "delivered", label: "Delivered", defaultVisible: true },
+    { id: "returned", label: "Returns / RTO", defaultVisible: true },
+    { id: "return_rate", label: "Return Rate", defaultVisible: true },
+    { id: "logistics_loss", label: "Logistics Loss", defaultVisible: true },
+    { id: "net_revenue", label: "Net Revenue", defaultVisible: true },
+    { id: "risk_tier", label: "Risk Tier", defaultVisible: true },
+];
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let kpis = {
+    gross_revenue: 0,
+    cogs: 0,
+    logistics_cost: 0,
+    net_profit: 0,
+    profit_margin: 0,
+    total_orders: 0,
+    delivered_orders: 0,
+    returned_orders: 0,
+    cancelled_orders: 0,
+    return_rate: 0,
+    return_losses: 0,
+    free_shipping_orders: 0,
+    free_shipping_losses: 0,
+    aov: 0,
+    ad_spend: 0,
+    cac: 0
+};
+let cityPerformance: any[] = [];
+
+// Date Filters
+const url = new URL(Astro.request.url);
+const period = url.searchParams.get("period") || "this_month";
+const customStart = url.searchParams.get("start") || "";
+const customEnd = url.searchParams.get("end") || "";
+
+let nowPktStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+let startDate = new Date(nowPktStr);
+let endDate = new Date(nowPktStr);
+
+if (period === "today") {
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "yesterday") {
+    startDate.setDate(startDate.getDate() - 1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "this_week") {
+    const day = startDate.getDay();
+    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+    startDate.setDate(diff);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "this_month") {
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "previous_month") {
+    startDate.setMonth(startDate.getMonth() - 1);
+    startDate.setDate(1);
+    startDate.setHours(0, 0, 0, 0);
+    endDate = new Date(startDate);
+    endDate.setMonth(endDate.getMonth() + 1);
+    endDate.setDate(0);
+    endDate.setHours(23, 59, 59, 999);
+} else if (period === "last_30_days") {
+    startDate.setDate(startDate.getDate() - 30);
+    startDate.setHours(0, 0, 0, 0);
+} else if (period === "lifetime") {
+    startDate = new Date("2020-01-01");
+} else if (period === "custom" && customStart && customEnd) {
+    startDate = new Date(customStart + "T00:00:00");
+    endDate = new Date(customEnd + "T23:59:59");
+}
+
+const PKT_OFFSET = 5 * 60 * 60 * 1000;
+startDate.setTime(startDate.getTime() - PKT_OFFSET);
+endDate.setTime(endDate.getTime() - PKT_OFFSET);
+
+const startStr = startDate.toISOString();
+const endStr = endDate.toISOString();
+
+// Settings
+let logisticsCost = 260; 
+
+try {
+    if (db) {
+        const settings = await getAllSettings(db);
+        logisticsCost = settings.bi_logistics_cost || 260;
+        kpis.ad_spend = settings.current_monthly_ad_spend || 0;
+
+        // Fetch Orders and COGS
+        const query = `
+            SELECT 
+                o.id, 
+                o.status, 
+                o.delivery_fee, 
+                o.total_amount, 
+                o.created_at,
+                SUM(p.cost_price * oi.quantity) as order_cogs
+            FROM orders o
+            LEFT JOIN order_items oi ON o.id = oi.order_id
+            LEFT JOIN products p ON oi.product_id = p.id
+            WHERE DATETIME(o.created_at) >= DATETIME(?) AND DATETIME(o.created_at) <= DATETIME(?)
+            GROUP BY o.id
+        `;
+        
+        const { results } = await db.prepare(query).bind(startStr, endStr).all();
+
+        if (results && results.length > 0) {
+            kpis.total_orders = results.length;
+            
+            for (const order of results) {
+                const cogs = parseFloat(order.order_cogs || 0);
+                const revenue = parseFloat(order.total_amount || 0);
+                const customerPaidShipping = parseFloat(order.delivery_fee || 0);
+                const status = order.status;
+
+                // Delivered Orders (Revenue & Profit)
+                // We treat 'Shipped' or 'Dispatched' as expected revenue, but only 'Delivered' is true finalized revenue usually.
+                // Let's count anything not 'Cancelled' or 'Returned' as gross revenue for the pipeline.
+                // However, strictly, true profit should only be on Delivered.
+                // We will use standard eCommerce logic: Revenue = Not Cancelled/Returned.
+                
+                if (status === 'Returned' || status === 'Delivery Failed') {
+                    kpis.returned_orders++;
+                    kpis.return_losses += logisticsCost; // Wasted shipping and flyer
+                    kpis.logistics_cost += logisticsCost;
+                } else if (status === 'Cancelled') {
+                    kpis.cancelled_orders++;
+                } else {
+                    kpis.delivered_orders++;
+                    kpis.gross_revenue += revenue;
+                    kpis.cogs += cogs;
+                    kpis.logistics_cost += logisticsCost;
+
+                    // Free shipping tracking
+                    if (customerPaidShipping === 0) {
+                        kpis.free_shipping_orders++;
+                        // Since customer paid 0, our entire logisticsCost is out of pocket loss for shipping
+                        kpis.free_shipping_losses += logisticsCost; 
+                    }
+                }
+            }
+
+            // Calculate aggregated metrics
+            kpis.net_profit = kpis.gross_revenue - kpis.cogs - kpis.logistics_cost - kpis.ad_spend;
+            if (kpis.gross_revenue > 0) {
+                kpis.profit_margin = (kpis.net_profit / kpis.gross_revenue) * 100;
+                kpis.aov = kpis.gross_revenue / kpis.delivered_orders;
+            }
+            if (kpis.delivered_orders > 0) {
+                kpis.cac = kpis.ad_spend / kpis.delivered_orders;
+            }
+            if (kpis.total_orders > 0) {
+                kpis.return_rate = (kpis.returned_orders / kpis.total_orders) * 100;
+            }
+        }
+
+        // City-Wise Return & Delivery Intelligence
+        const cityQuery = `
+            SELECT 
+                city,
+                COUNT(*) as total_orders,
+                SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) as delivered_orders,
+                SUM(CASE WHEN status IN ('Returned', 'Delivery Failed') THEN 1 ELSE 0 END) as returned_orders,
+                SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_orders,
+                SUM(CASE WHEN status NOT IN ('Cancelled', 'Returned', 'Delivery Failed') THEN total_amount ELSE 0 END) as net_revenue
+            FROM orders
+            WHERE DATETIME(created_at) >= DATETIME(?) AND DATETIME(created_at) <= DATETIME(?)
+            GROUP BY LOWER(TRIM(city))
+            HAVING total_orders > 0
+            ORDER BY returned_orders DESC, total_orders DESC
+            LIMIT 25
+        `;
+
+        const { results: cityResults } = await db.prepare(cityQuery).bind(startStr, endStr).all();
+        if (cityResults) {
+            cityPerformance = cityResults.map((c: any) => {
+                const total = parseInt(c.total_orders || 0);
+                const delivered = parseInt(c.delivered_orders || 0);
+                const returned = parseInt(c.returned_orders || 0);
+                const cancelled = parseInt(c.cancelled_orders || 0);
+                const rate = total > 0 ? (returned / total) * 100 : 0;
+                const loss = returned * logisticsCost;
+                const formattedCity = c.city ? c.city.split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ') : 'Unknown';
+
+                return {
+                    city: formattedCity,
+                    total,
+                    delivered,
+                    returned,
+                    cancelled,
+                    return_rate: rate,
+                    logistics_loss: loss,
+                    revenue: parseFloat(c.net_revenue || 0)
+                };
+            });
+        }
+    }
+} catch (e: any) {
+    errorMsg = "Failed to load BI data: " + e.message;
+}
+
+const seoTitle = "Business Intelligence - Dior Sauvage Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="bi">
+    <div class="flex justify-between items-start mb-8">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-800 tracking-tight">Business Intelligence</h1>
+            <p class="text-sm text-gray-500 mt-1">Track your true profitability, COGS, and logistics costs.</p>
+        </div>
+        
+        <!-- Filters -->
+        <form class="flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-white p-2 border border-gray-200 rounded-lg shadow-sm w-full md:w-auto" method="GET">
+            <select name="period" id="period-select" class="text-sm border-none bg-transparent focus:ring-0 text-gray-700 font-medium cursor-pointer py-1 pl-2 pr-8 w-full sm:w-auto admin-select">
+                <option value="today" selected={period === 'today'}>Today</option>
+                <option value="yesterday" selected={period === 'yesterday'}>Yesterday</option>
+                <option value="this_week" selected={period === 'this_week'}>This Week</option>
+                <option value="this_month" selected={period === 'this_month'}>This Month</option>
+                <option value="previous_month" selected={period === 'previous_month'}>Previous Month</option>
+                <option value="last_30_days" selected={period === 'last_30_days'}>Last 30 Days</option>
+                <option value="lifetime" selected={period === 'lifetime'}>Lifetime</option>
+                <option value="custom" selected={period === 'custom'}>Custom Range...</option>
+            </select>
+            
+            <div id="custom-date-inputs" class={`flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:border-l border-gray-200 sm:pl-3 w-full sm:w-auto ${period === 'custom' ? 'flex' : 'hidden'}`}>
+                <input type="date" name="start" value={customStart} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-full sm:w-auto" required={period === 'custom'} />
+                <span class="text-gray-400 text-sm hidden sm:inline">to</span>
+                <input type="date" name="end" value={customEnd} class="text-sm border border-gray-200 rounded-md py-1.5 px-2 w-full sm:w-auto" required={period === 'custom'} />
+                <button type="submit" class="bg-brand-orange text-white px-3 py-1.5 rounded-md text-sm font-bold shadow-sm hover:bg-brand-orange/90 transition-colors w-full sm:w-auto mt-1 sm:mt-0">Apply</button>
+            </div>
+        </form>
+
+        <script is:inline>
+            const select = document.getElementById('period-select');
+            const customInputs = document.getElementById('custom-date-inputs');
+            const dateFields = customInputs.querySelectorAll('input[type="date"]');
+            
+            select.addEventListener('change', function() {
+                if (this.value === 'custom') {
+                    customInputs.classList.remove('hidden');
+                    customInputs.classList.add('flex');
+                    dateFields.forEach(f => f.required = true);
+                } else {
+                    customInputs.classList.add('hidden');
+                    customInputs.classList.remove('flex');
+                    dateFields.forEach(f => f.required = false);
+                    this.form.submit();
+                }
+            });
+        </script>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 text-red-800 p-4 rounded-lg mb-8 text-sm">{errorMsg}</div>
+    )}
+
+    <!-- Top KPIs -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <!-- True Net Profit -->
+        <div class="bg-gradient-to-br from-emerald-900 to-emerald-800 rounded-xl p-6 shadow-lg text-white relative overflow-hidden">
+            <div class="absolute right-0 top-0 opacity-10 transform translate-x-1/4 -translate-y-1/4">
+                <svg class="w-32 h-32" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            </div>
+            <p class="text-emerald-100 text-xs font-semibold uppercase tracking-wider mb-2">True Net Profit</p>
+            <h2 class="text-3xl font-bold tracking-tight mb-1">PKR {Math.round(kpis.net_profit).toLocaleString()}</h2>
+            <div class="flex items-center gap-2 mt-4 text-sm">
+                <span class={`font-medium px-2 py-0.5 rounded ${kpis.profit_margin >= 20 ? 'bg-emerald-500/30 text-emerald-100' : 'bg-red-500/40 text-rose-100'}`}>
+                    {kpis.profit_margin.toFixed(1)}% Margin
+                </span>
+            </div>
+        </div>
+
+        <div class="bg-emerald-50/60 rounded-xl p-6 border border-emerald-100 shadow-sm">
+            <p class="text-emerald-700 text-xs font-semibold uppercase tracking-wider mb-2">Gross Revenue</p>
+            <h2 class="text-2xl font-bold text-emerald-900">PKR {Math.round(kpis.gross_revenue).toLocaleString()}</h2>
+            <p class="text-xs text-emerald-600/80 mt-2 border-t border-emerald-100/50 pt-2">{kpis.delivered_orders} Valid Orders</p>
+        </div>
+
+        <div class="bg-rose-50/60 rounded-xl p-6 border border-rose-100 shadow-sm">
+            <p class="text-rose-700 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center group relative cursor-help w-max">
+                COGS <span class="ml-1 opacity-60 text-[10px]">ⓘ</span>
+                <span class="absolute bottom-full left-0 mb-2 hidden group-hover:block w-max max-w-[200px] bg-gray-900 text-white text-[11px] normal-case rounded py-1.5 px-2.5 z-10 shadow-lg tracking-normal font-normal">Cost of Goods Sold (Product supply cost)</span>
+            </p>
+            <h2 class="text-2xl font-bold text-rose-700">- PKR {Math.round(kpis.cogs).toLocaleString()}</h2>
+            <p class="text-xs text-rose-600/80 mt-2 border-t border-rose-100/50 pt-2">Product Costs</p>
+        </div>
+
+        <div class="bg-rose-50/60 rounded-xl p-6 border border-rose-100 shadow-sm">
+            <p class="text-rose-700 text-xs font-semibold uppercase tracking-wider mb-2">Logistics Cost</p>
+            <h2 class="text-2xl font-bold text-rose-700">- PKR {Math.round(kpis.logistics_cost).toLocaleString()}</h2>
+            <p class="text-xs text-rose-600/80 mt-2 border-t border-rose-100/50 pt-2">@ PKR {logisticsCost} / order</p>
+        </div>
+
+        <div class="bg-rose-50/60 rounded-xl p-6 border border-rose-100 shadow-sm">
+            <p class="text-rose-700 text-xs font-semibold uppercase tracking-wider mb-2">Ad Spend (Marketing)</p>
+            <h2 class="text-2xl font-bold text-rose-700">- PKR {Math.round(kpis.ad_spend).toLocaleString()}</h2>
+            <p class="text-xs text-rose-600/80 mt-2 border-t border-rose-100/50 pt-2">Set in General Settings</p>
+        </div>
+
+        <div class="bg-rose-50/60 rounded-xl p-6 border border-rose-100 shadow-sm">
+            <p class="text-rose-700 text-xs font-semibold uppercase tracking-wider mb-2 flex items-center group relative cursor-help w-max">
+                CAC <span class="ml-1 opacity-60 text-[10px]">ⓘ</span>
+                <span class="absolute bottom-full left-0 mb-2 hidden group-hover:block w-max max-w-[220px] bg-gray-900 text-white text-[11px] normal-case rounded py-1.5 px-2.5 z-10 shadow-lg tracking-normal font-normal">Customer Acquisition Cost (Ad Spend ÷ Valid Orders)</span>
+            </p>
+            <h2 class="text-2xl font-bold text-rose-700">PKR {Math.round(kpis.cac).toLocaleString()}</h2>
+            <p class="text-xs text-rose-600/80 mt-2 border-t border-rose-100/50 pt-2">Cost per valid customer</p>
+        </div>
+    </div>
+
+    <!-- Secondary Insights Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <!-- Total Orders Insight -->
+        <div class="bg-blue-50/50 rounded-xl p-6 border border-blue-100 shadow-sm">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="bg-blue-100 text-blue-700 p-2 rounded-lg">
+                    <Icon name="package" class="w-5 h-5" />
+                </div>
+                <h3 class="font-bold text-blue-900">Total Orders</h3>
+            </div>
+            <div class="mt-2">
+                <p class="text-3xl font-bold text-blue-900">{kpis.total_orders}</p>
+            </div>
+            <p class="text-xs text-blue-600/80 mt-4">{kpis.delivered_orders} valid, {kpis.returned_orders} returned, {kpis.cancelled_orders} cancelled</p>
+        </div>
+
+        <!-- Returns Insight -->
+        <div class="bg-rose-50/50 rounded-xl p-6 border border-rose-100 shadow-sm">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="bg-rose-100 text-rose-700 p-2 rounded-lg">
+                    <Icon name="arrow-uturn-left" class="w-5 h-5" />
+                </div>
+                <h3 class="font-bold text-rose-900 flex items-center group relative cursor-help">
+                    Returns (RTO) <span class="ml-1 opacity-60 text-[10px]">ⓘ</span>
+                    <span class="absolute bottom-full left-0 mb-2 hidden group-hover:block w-max max-w-[200px] bg-gray-900 text-white text-[11px] normal-case rounded py-1.5 px-2.5 z-10 shadow-lg tracking-normal font-normal">Return To Origin (Orders that bounce back)</span>
+                </h3>
+            </div>
+            <div class="flex items-end justify-between">
+                <div>
+                    <p class="text-sm text-rose-700/80 mb-1">Return Rate</p>
+                    <p class="text-xl font-bold text-rose-900">{kpis.return_rate.toFixed(1)}%</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-sm text-rose-700/80 mb-1">Loss from Returns</p>
+                    <p class="text-xl font-bold text-rose-600">- PKR {kpis.return_losses.toLocaleString()}</p>
+                </div>
+            </div>
+            <p class="text-xs text-rose-600/80 mt-4">{kpis.returned_orders} returned orders out of {kpis.total_orders}</p>
+        </div>
+
+        <!-- Free Shipping Insight -->
+        <div class="bg-indigo-50/50 rounded-xl p-6 border border-indigo-100 shadow-sm">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="bg-indigo-100 text-indigo-700 p-2 rounded-lg">
+                    <Icon name="truck" class="w-5 h-5" />
+                </div>
+                <h3 class="font-bold text-indigo-900">Free Shipping</h3>
+            </div>
+            <div class="flex items-end justify-between">
+                <div>
+                    <p class="text-sm text-indigo-700/80 mb-1">Orders</p>
+                    <p class="text-xl font-bold text-indigo-900">{kpis.free_shipping_orders}</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-sm text-indigo-700/80 mb-1">Cost Absorbed</p>
+                    <p class="text-xl font-bold text-indigo-600">- PKR {kpis.free_shipping_losses.toLocaleString()}</p>
+                </div>
+            </div>
+            <p class="text-xs text-indigo-600/80 mt-4">Shipping fees paid from profit</p>
+        </div>
+
+        <!-- AOV Insight -->
+        <div class="bg-emerald-50/50 rounded-xl p-6 border border-emerald-100 shadow-sm">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="bg-emerald-100 text-emerald-700 p-2 rounded-lg">
+                    <Icon name="shopping-bag" class="w-5 h-5" />
+                </div>
+                <h3 class="font-bold text-emerald-900">Average Order Value</h3>
+            </div>
+            <div class="mt-2">
+                <p class="text-3xl font-bold text-emerald-900">PKR {Math.round(kpis.aov).toLocaleString()}</p>
+            </div>
+            <p class="text-xs text-emerald-600/80 mt-4">Gross Revenue ÷ Valid Orders</p>
+        </div>
+    </div>
+    
+    <!-- City-Wise Return & Delivery Performance Table -->
+    <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mb-8">
+        <div class="px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gray-50/50">
+            <div>
+                <h3 class="font-bold text-gray-800 text-base flex items-center gap-2">
+                    <Icon name="map-pin" class="w-4 h-4 text-brand-orange" />
+                    <span>City-Wise Return & Delivery Intelligence</span>
+                </h3>
+                <p class="text-xs text-gray-500 mt-0.5">Identify highest returning cities and monitor wasted logistics costs</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-semibold px-2.5 py-1.5 bg-white rounded-md border border-gray-200 text-gray-600 shadow-sm">
+                    Top {cityPerformance.length} Active Cities
+                </span>
+                <ColumnSelector tableId="city-performance-table" storageKey="admin_bi_city_cols" columns={cityColumns} />
+            </div>
+        </div>
+        
+        <div class="overflow-x-auto">
+            <table id="city-performance-table" class="w-full text-left border-collapse text-sm">
+                <thead>
+                    <tr class="bg-gray-50/80 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wider select-none">
+                        <th class="py-3 px-4 cursor-pointer hover:bg-gray-100 transition-colors group" data-col="city" data-sort="city">
+                            <div class="flex items-center gap-1.5">
+                                <span>City</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-center cursor-pointer hover:bg-gray-100 transition-colors group" data-col="total_orders" data-sort="total_orders">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <span>Total Orders</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-center cursor-pointer hover:bg-gray-100 transition-colors group" data-col="delivered" data-sort="delivered">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <span>Delivered</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-center cursor-pointer hover:bg-gray-100 transition-colors group" data-col="returned" data-sort="returned">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <span>Returns / RTO</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-center cursor-pointer hover:bg-gray-100 transition-colors group" data-col="return_rate" data-sort="return_rate">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <span>Return Rate</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-100 transition-colors group" data-col="logistics_loss" data-sort="logistics_loss">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <span>Logistics Loss</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-right cursor-pointer hover:bg-gray-100 transition-colors group" data-col="net_revenue" data-sort="net_revenue">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <span>Net Revenue</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                        <th class="py-3 px-4 text-center cursor-pointer hover:bg-gray-100 transition-colors group" data-col="risk_tier" data-sort="risk_tier">
+                            <div class="flex items-center justify-center gap-1.5">
+                                <span>Risk Tier</span>
+                                <Icon name="arrows-up-down" class="w-3.5 h-3.5 text-gray-400 group-hover:text-gray-700 transition-colors sort-icon" />
+                            </div>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 text-gray-700">
+                    {cityPerformance.length === 0 ? (
+                        <tr>
+                            <td colspan="8" class="p-8 text-center text-gray-400">
+                                No city data available for the selected date period.
+                            </td>
+                        </tr>
+                    ) : (
+                        cityPerformance.map((c) => {
+                            let riskClass = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                            let riskLabel = "Low Risk";
+                            let riskVal = 1;
+                            if (c.total >= 3 && c.return_rate >= 35) {
+                                riskClass = "bg-rose-50 text-rose-700 border-rose-200";
+                                riskLabel = "High Risk";
+                                riskVal = 3;
+                            } else if (c.total >= 3 && c.return_rate >= 18) {
+                                riskClass = "bg-amber-50 text-amber-700 border-amber-200";
+                                riskLabel = "Moderate Risk";
+                                riskVal = 2;
+                            }
+
+                            return (
+                                <tr class="hover:bg-gray-50/60 transition-colors">
+                                    <td class="py-3 px-4 font-semibold text-gray-900 flex items-center gap-1.5" data-col="city" data-val={c.city}>
+                                        <Icon name="map-pin" class="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                                        <span>{c.city}</span>
+                                    </td>
+                                    <td class="py-3 px-4 text-center font-medium" data-col="total_orders" data-val={c.total}>{c.total}</td>
+                                    <td class="py-3 px-4 text-center text-emerald-600 font-semibold" data-col="delivered" data-val={c.delivered}>{c.delivered}</td>
+                                    <td class="py-3 px-4 text-center text-rose-600 font-bold" data-col="returned" data-val={c.returned}>{c.returned}</td>
+                                    <td class="py-3 px-4 text-center" data-col="return_rate" data-val={c.return_rate}>
+                                        <span class={`inline-block font-bold ${c.return_rate >= 25 ? 'text-rose-600' : c.return_rate >= 15 ? 'text-amber-600' : 'text-gray-700'}`}>
+                                            {c.return_rate.toFixed(1)}%
+                                        </span>
+                                    </td>
+                                    <td class="py-3 px-4 text-right font-medium text-rose-600" data-col="logistics_loss" data-val={c.logistics_loss}>
+                                        {c.logistics_loss > 0 ? `- PKR ${c.logistics_loss.toLocaleString()}` : 'PKR 0'}
+                                    </td>
+                                    <td class="py-3 px-4 text-right font-semibold text-gray-900" data-col="net_revenue" data-val={c.revenue}>
+                                        PKR {Math.round(c.revenue).toLocaleString()}
+                                    </td>
+                                    <td class="py-3 px-4 text-center" data-col="risk_tier" data-val={riskVal}>
+                                        <span class={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full border ${riskClass}`}>
+                                            {riskLabel}
+                                        </span>
+                                    </td>
+                                </tr>
+                            );
+                        })
+                    )}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Client-side Sorting Script for City Performance Table -->
+    <script is:inline>
+        document.addEventListener('DOMContentLoaded', () => {
+            const table = document.getElementById('city-performance-table');
+            if (!table) return;
+
+            const tbody = table.querySelector('tbody');
+            const headers = table.querySelectorAll('th[data-sort]');
+            let currentSort = { col: 'returned', dir: 'desc' }; // default matches server ranking
+
+            headers.forEach(th => {
+                th.addEventListener('click', () => {
+                    const colKey = th.getAttribute('data-sort');
+                    if (!colKey) return;
+
+                    const newDir = (currentSort.col === colKey && currentSort.dir === 'desc') ? 'asc' : 'desc';
+                    currentSort = { col: colKey, dir: newDir };
+
+                    const rows = Array.from(tbody.querySelectorAll('tr'));
+                    if (rows.length <= 1 && rows[0].querySelector('td[colspan]')) return; // No rows
+
+                    rows.sort((a, b) => {
+                        const cellA = a.querySelector(`[data-col="${colKey}"]`);
+                        const cellB = b.querySelector(`[data-col="${colKey}"]`);
+                        if (!cellA || !cellB) return 0;
+
+                        const valA = cellA.getAttribute('data-val') ?? cellA.textContent.trim();
+                        const valB = cellB.getAttribute('data-val') ?? cellB.textContent.trim();
+
+                        const numA = parseFloat(valA);
+                        const numB = parseFloat(valB);
+
+                        if (!isNaN(numA) && !isNaN(numB)) {
+                            return newDir === 'asc' ? numA - numB : numB - numA;
+                        }
+
+                        return newDir === 'asc' 
+                            ? String(valA).localeCompare(String(valB)) 
+                            : String(valB).localeCompare(String(valA));
+                    });
+
+                    rows.forEach(r => tbody.appendChild(r));
+
+                    // Update sort icons visual feedback
+                    headers.forEach(h => {
+                        const icon = h.querySelector('.sort-icon');
+                        if (icon) {
+                            if (h === th) {
+                                icon.classList.remove('text-gray-400');
+                                icon.classList.add('text-brand-orange');
+                                icon.style.transform = newDir === 'asc' ? 'rotate(180deg)' : 'rotate(0deg)';
+                            } else {
+                                icon.classList.add('text-gray-400');
+                                icon.classList.remove('text-brand-orange');
+                                icon.style.transform = 'none';
+                            }
+                        }
+                    });
+                });
+            });
+        });
+    </script>
+    
+    <div class="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-lg flex items-start gap-3 shadow-sm mb-8">
+        <div class="bg-blue-100 text-blue-800 p-1.5 rounded-full shrink-0">
+            <Icon name="info" class="w-4 h-4 text-blue-700" />
+        </div>
+        <div>
+            <p class="font-semibold text-sm">How is Net Profit calculated?</p>
+            <p class="text-xs mt-0.5 leading-relaxed">
+                Gross Revenue - (Product Cost Price × Quantity) - (Estimated Logistics Cost × Shipped Orders) - (Estimated Logistics Cost × Returned Orders) - (Ad Spend) = True Net Profit. Note: Currently filtered by Order Creation Date.
+            </p>
+        </div>
+    </div>
+</AdminLayout>

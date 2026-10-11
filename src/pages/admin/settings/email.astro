@@ -1,0 +1,970 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import { getAllSettings, saveMultipleSettings } from "../../../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let successMsg = "";
+let activeTab = "templates";
+
+const url = new URL(Astro.request.url);
+if (url.searchParams.get("tab")) {
+    activeTab = url.searchParams.get("tab") || "templates";
+}
+
+let settings: any = null;
+let emailLogs: any[] = [];
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml.";
+} else {
+    try {
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "save_settings" || action === "save_template" || action === "save_connection") {
+                const settingsToSave: Record<string, string> = {};
+
+                if (formData.has("email_sender")) {
+                    settingsToSave["email_sender"] = formData.get("email_sender")?.toString().trim() || "Gionee Pakistan <orders@gionee.com.pk>";
+                }
+                if (formData.has("email_placed_enabled")) {
+                    settingsToSave["email_placed_enabled"] = formData.get("email_placed_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("email_subject_order_placed")) {
+                    settingsToSave["email_subject_order_placed"] = formData.get("email_subject_order_placed")?.toString().trim() || "";
+                }
+                if (formData.has("email_template_order_placed")) {
+                    settingsToSave["email_template_order_placed"] = formData.get("email_template_order_placed")?.toString() || "";
+                }
+                if (formData.has("email_shipped_enabled")) {
+                    settingsToSave["email_shipped_enabled"] = formData.get("email_shipped_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("email_subject_shipped")) {
+                    settingsToSave["email_subject_shipped"] = formData.get("email_subject_shipped")?.toString().trim() || "";
+                }
+                if (formData.has("email_template_shipped")) {
+                    settingsToSave["email_template_shipped"] = formData.get("email_template_shipped")?.toString() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_enabled")) {
+                    settingsToSave["whatsapp_failure_alert_enabled"] = formData.get("whatsapp_failure_alert_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_failure_alert_recipients")) {
+                    settingsToSave["whatsapp_failure_alert_recipients"] = formData.get("whatsapp_failure_alert_recipients")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_subject")) {
+                    settingsToSave["whatsapp_failure_alert_subject"] = formData.get("whatsapp_failure_alert_subject")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_template")) {
+                    settingsToSave["whatsapp_failure_alert_template"] = formData.get("whatsapp_failure_alert_template")?.toString() || "";
+                }
+
+                const success = await saveMultipleSettings(db, settingsToSave);
+                if (success) {
+                    successMsg = "Email settings saved successfully!";
+                } else {
+                    errorMsg = "Failed to save settings. Please try again.";
+                }
+            } else if (action === "clear_logs") {
+                try {
+                    await db.prepare(`DELETE FROM resend_email_logs`).run();
+                    successMsg = "Email logs cleared successfully.";
+                } catch (err: any) {
+                    errorMsg = "Failed to clear logs: " + err.message;
+                }
+            }
+        }
+
+        settings = await getAllSettings(db);
+
+        // Fetch Email API Logs
+        await db.prepare(`
+            CREATE TABLE IF NOT EXISTS resend_email_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                order_id TEXT,
+                recipient TEXT NOT NULL,
+                subject TEXT,
+                payload TEXT,
+                response TEXT,
+                error TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `).run();
+
+        // Optional Pruning: Keep only the latest 200 logs
+        await db.prepare(`
+            DELETE FROM resend_email_logs 
+            WHERE id NOT IN (SELECT id FROM resend_email_logs ORDER BY id DESC LIMIT 200)
+        `).run();
+
+        const logsResult = await db.prepare(`SELECT * FROM resend_email_logs ORDER BY id DESC LIMIT 100`).all();
+        emailLogs = logsResult.results || [];
+
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+const seoTitle = "Email & Dispatch Templates - Gionee Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="settings">
+    <!-- Header -->
+    <div class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                    <span class="w-8 h-8 rounded-lg bg-orange-100 text-brand-orange flex items-center justify-center">
+                        <Icon name="mail" class="w-5 h-5" />
+                    </span>
+                    Email & Dispatch Templates
+                </h1>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse"></span>
+                    Resend API Active
+                </span>
+            </div>
+            <p class="text-xs sm:text-sm text-gray-500 mt-1">Customize email subjects, HTML templates, and automated customer dispatch notifications.</p>
+        </div>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-red-100 text-red-700 p-1.5 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {successMsg && (
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-emerald-100 text-emerald-700 p-1.5 rounded-full shrink-0">
+                <Icon name="check" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm text-emerald-800">Success</p>
+                <p class="text-xs mt-0.5 text-emerald-700">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Navigation Tabs (Matching AI Chatbot Pill Tab Style) -->
+    <div class="mb-6 p-1.5 bg-gray-100/90 rounded-2xl border border-gray-200/80 flex flex-wrap items-center gap-1.5">
+        <a href="?tab=templates" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'templates' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="mail" class={`w-4 h-4 shrink-0 ${activeTab === 'templates' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Email Templates</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'templates' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>3</span>
+        </a>
+        <a href="?tab=connection" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'connection' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="settings" class={`w-4 h-4 shrink-0 ${activeTab === 'connection' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Sender & API Configurations</span>
+        </a>
+        <a href="?tab=logs" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="clock" class={`w-4 h-4 shrink-0 ${activeTab === 'logs' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Delivery Logs</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'logs' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>{emailLogs.length}</span>
+        </a>
+    </div>
+
+    <!-- TAB 1: EMAIL TEMPLATES (CARDS GRID) -->
+    {activeTab === "templates" && settings && (
+        <div class="space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <!-- Card 1: Order Placed Email -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.email_placed_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                    <Icon name="mail" class="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">1. Order Placed Email</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded mt-0.5">Trigger: Checkout Placed</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="email_placed_enabled" value={settings.email_placed_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.email_placed_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                                    <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Sends an immediate HTML order receipt and item breakdown to the customer's email upon completing checkout.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Subject:</span>
+                                <span class="font-semibold text-gray-800 truncate max-w-[200px]" title={settings.email_subject_order_placed}>{settings.email_subject_order_placed || "Your Order #{order_id} is Received!"}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Recipient:</span>
+                                <span class="font-semibold text-emerald-700">Customer Email</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.email_placed_enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.email_placed_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.email_placed_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-email-placed"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 2: Order Shipped Email -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.email_shipped_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                                    <Icon name="truck" class="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">2. Order Shipped Email</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded mt-0.5">Trigger: Status Changed to Shipped</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="email_shipped_enabled" value={settings.email_shipped_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.email_shipped_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-purple-500 transition-colors"></div>
+                                    <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Sent when courier pickup is verified. Includes tracking number, courier partner name, and live tracking link.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Subject:</span>
+                                <span class="font-semibold text-gray-800 truncate max-w-[200px]" title={settings.email_subject_shipped}>{settings.email_subject_shipped || "Your Order #{order_id} Has Been Shipped!"}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Tracking Link:</span>
+                                <span class="font-mono text-purple-700">Live Portal Link</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.email_shipped_enabled ? 'text-purple-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.email_shipped_enabled ? 'bg-purple-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.email_shipped_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-email-shipped"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 3: WhatsApp Failure Alert Email -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.whatsapp_failure_alert_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                                    <Icon name="alert-triangle" class="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">3. WhatsApp Disconnect & Failure Alert</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-red-700 bg-red-50 px-2 py-0.5 rounded mt-0.5">Trigger: Session Stopped / Sending Error</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_failure_alert_enabled" value={settings.whatsapp_failure_alert_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_failure_alert_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-red-500 transition-colors"></div>
+                                    <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Dispatches an immediate urgent alert email to technical admins whenever OpenWA stops responding or WhatsApp session disconnects.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1.5 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Subject:</span>
+                                <span class="font-semibold text-gray-800 truncate max-w-[200px]" title={settings.whatsapp_failure_alert_subject}>{settings.whatsapp_failure_alert_subject || "[URGENT] Gionee WhatsApp Service Disconnected"}</span>
+                            </div>
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-gray-500 gap-1">
+                                <span class="font-semibold text-gray-700">Recipients:</span>
+                                <span class="font-mono text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-200 text-[10px] truncate max-w-[260px]">{settings.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Anti-Spam Throttle:</span>
+                                <span class="font-semibold text-emerald-700">Max 1 alert / 15 mins</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_failure_alert_enabled ? 'text-red-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_failure_alert_enabled ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_failure_alert_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-email-whatsapp-failure"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- TAB 2: SENDER & API CONFIGURATIONS -->
+    {activeTab === "connection" && settings && (
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-8">
+            <form method="POST" class="space-y-6">
+                <input type="hidden" name="action" value="save_connection" />
+
+                <div class="border-b border-gray-100 pb-4">
+                    <h2 class="text-base font-bold text-gray-900">Email Sender & Resend API Details</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">Configure authenticated sender email address used for transactional customer emails.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Sender Email Address</label>
+                        <input
+                            type="text"
+                            name="email_sender"
+                            value={settings.email_sender}
+                            placeholder="Gionee Pakistan <orders@gionee.com.pk>"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                        />
+                        <span class="text-[11px] text-gray-400 mt-1.5 block">Must match the verified sending domain in your Resend account.</span>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-orange-50/60 rounded-xl border border-orange-200/60 text-xs text-gray-700 space-y-1.5">
+                    <div class="font-bold text-brand-orange flex items-center gap-1.5">
+                        <Icon name="info" class="w-4 h-4" />
+                        <span>Resend API Integration</span>
+                    </div>
+                    <p>API keys are securely loaded from Cloudflare Environment Secrets (<code class="font-mono font-semibold">RESEND_API_KEY</code>). All delivery events are automatically tracked in the Delivery Logs tab.</p>
+                </div>
+
+                <div class="pt-6 border-t border-gray-100 flex justify-end">
+                    <button
+                        type="submit"
+                        class="bg-brand-orange text-white text-sm font-semibold px-6 py-2.5 rounded-xl hover:bg-orange-600 transition-colors shadow-xs cursor-pointer"
+                    >
+                        Save Sender Settings
+                    </button>
+                </div>
+            </form>
+        </div>
+    )}
+
+    <!-- TAB 3: DELIVERY LOGS -->
+    {activeTab === "logs" && (
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-8">
+            <div class="border-b border-gray-100 pb-4 flex justify-between items-center mb-6">
+                <div>
+                    <h3 class="text-base font-bold text-gray-900">Resend API Delivery Logs</h3>
+                    <p class="text-xs text-gray-500 mt-0.5">Showing recent transactional email delivery attempts.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <form method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete all Resend email logs? This cannot be undone.');">
+                        <input type="hidden" name="action" value="clear_logs" />
+                        <button
+                            type="submit"
+                            class="bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                            <Icon name="trash-2" class="w-3.5 h-3.5" />
+                            <span>Clear Logs</span>
+                        </button>
+                    </form>
+                    <button
+                        type="button"
+                        onclick="window.location.reload()"
+                        class="bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                        <Icon name="refresh-cw" class="w-3.5 h-3.5" />
+                        <span>Refresh Logs</span>
+                    </button>
+                </div>
+            </div>
+
+            {emailLogs.length === 0 ? (
+                <div class="text-center py-12 border border-dashed border-gray-200 rounded-xl text-gray-400 space-y-2">
+                    <div class="flex justify-center">
+                        <div class="p-3 bg-gray-100 rounded-full text-gray-400">
+                            <Icon name="mail" class="w-6 h-6" />
+                        </div>
+                    </div>
+                    <p class="text-sm font-medium">No email logs recorded yet.</p>
+                    <p class="text-xs max-w-sm mx-auto">Once an order is placed or shipped, logs will appear here.</p>
+                </div>
+            ) : (
+                <div class="overflow-x-auto border border-gray-200 rounded-xl shadow-xs">
+                    <table class="min-w-full divide-y divide-gray-100 text-left text-xs">
+                        <thead class="bg-gray-50 text-gray-600 font-semibold uppercase tracking-wider">
+                            <tr>
+                                <th class="px-4 py-3">Timestamp</th>
+                                <th class="px-4 py-3">Type</th>
+                                <th class="px-4 py-3">Order ID</th>
+                                <th class="px-4 py-3">Recipient</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3 text-right">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 text-gray-700 bg-white">
+                            {emailLogs.map((log: any) => (
+                                <>
+                                <tr class="hover:bg-gray-50/50">
+                                    <td class="px-4 py-3 whitespace-nowrap text-gray-500 font-mono text-[11px]">
+                                        {new Date(log.created_at.replace(' ', 'T') + 'Z').toLocaleString('en-PK', { timeZone: 'Asia/Karachi', dateStyle: 'short', timeStyle: 'medium' })}
+                                    </td>
+                                    <td class="px-4 py-3 font-medium text-gray-800">
+                                        <span class="bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                                            {log.type}
+                                        </span>
+                                    </td>
+                                    <td class="px-4 py-3 text-gray-600 font-mono text-[11px]">{log.order_id || '—'}</td>
+                                    <td class="px-4 py-3 text-gray-600">{log.recipient}</td>
+                                    <td class="px-4 py-3 whitespace-nowrap">
+                                        {log.error ? (
+                                            <span class="text-red-700 font-semibold bg-red-50 px-2 py-0.5 rounded-full border border-red-200/50 text-[10px]">Failed</span>
+                                        ) : (
+                                            <span class="text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200/50 text-[10px]">Success</span>
+                                        )}
+                                    </td>
+                                    <td class="px-4 py-3 text-right font-medium">
+                                        <button
+                                            type="button"
+                                            data-view-payload-id={log.id}
+                                            class="text-brand-orange hover:text-orange-700 font-semibold cursor-pointer"
+                                        >
+                                            View Logs
+                                        </button>
+                                    </td>
+                                </tr>
+                                <tr id={`payload-row-${log.id}`} class="hidden bg-gray-50/40">
+                                    <td colspan="6" class="px-6 py-4">
+                                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {log.payload && (
+                                                <div class="bg-gray-900 text-gray-300 p-4 rounded-xl overflow-x-auto text-[11px] font-mono shadow-inner border border-gray-800">
+                                                    <div class="text-gray-500 text-[10px] uppercase font-bold mb-2 tracking-wider">
+                                                        <span>Subject</span>
+                                                    </div>
+                                                    <div class="mb-4 text-white text-xs font-semibold">{log.subject}</div>
+                                                    
+                                                    <div class="text-gray-500 text-[10px] uppercase font-bold mb-2 tracking-wider">
+                                                        <span>Request Payload</span>
+                                                    </div>
+                                                    <pre><code>{(() => {
+                                                        try { return JSON.stringify(JSON.parse(log.payload), null, 2); }
+                                                        catch(e) { return log.payload; }
+                                                    })()}</code></pre>
+                                                </div>
+                                            )}
+                                            {(log.response || log.error) && (
+                                                <div class={`${log.error ? 'bg-red-950 text-red-300 border border-red-900' : 'bg-gray-900 text-gray-300 border border-gray-800'} p-4 rounded-xl overflow-x-auto text-[11px] font-mono shadow-inner`}>
+                                                    <div class={`${log.error ? 'text-red-400' : 'text-gray-500'} text-[10px] uppercase font-bold mb-2 tracking-wider`}>
+                                                        {log.error ? 'Error Details' : 'API Response'}
+                                                    </div>
+                                                    <pre><code>{(() => {
+                                                        const out = log.error || log.response;
+                                                        try { return JSON.stringify(JSON.parse(out), null, 2); }
+                                                        catch(e) { return out; }
+                                                    })()}</code></pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                                </>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    )}
+
+    <!-- ========================================================================= -->
+    <!-- MODALS FOR CONFIGURE & PREVIEW EACH EMAIL TEMPLATE -->
+    <!-- ========================================================================= -->
+
+    <!-- Modal 1: Order Placed Email Template -->
+    <div id="modal-email-placed" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm">1</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Placed Email Template</h3>
+                        <p class="text-xs text-gray-500">Sent immediately upon checkout receipt.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between space-y-6">
+                <input type="hidden" name="action" value="save_template" />
+                
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-1.5">Email Subject Line</label>
+                    <input
+                        type="text"
+                        name="email_subject_order_placed"
+                        value={settings?.email_subject_order_placed || "Your Gionee Order #{order_id} is Received!"}
+                        class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                    />
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">HTML Email Template Code</label>
+                        <textarea
+                            name="email_template_order_placed"
+                            id="modal_input_email_placed"
+                            rows="16"
+                            class="w-full text-xs border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.email_template_order_placed}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{order_id}">{"{order_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{items_table}">{"{items_table}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{subtotal}">{"{subtotal}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{shipping}">{"{shipping}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{total}">{"{total}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{address}">{"{address}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{city}">{"{city}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{phone}">{"{phone}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_placed" data-tag="{year}">{"{year}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live HTML Iframe Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live Render Preview</span>
+                        <div class="border border-gray-200 rounded-2xl bg-gray-50 overflow-hidden shadow-inner h-[440px] flex flex-col">
+                            <div class="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 text-[11px] text-gray-500 font-semibold">
+                                <span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>
+                                <span class="ml-2 font-mono text-[10px]">Email Viewer Preview</span>
+                            </div>
+                            <iframe id="modal_preview_email_placed" class="w-full flex-1 bg-white" frameborder="0"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal 2: Order Shipped Email Template -->
+    <div id="modal-email-shipped" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm">2</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Shipped Email Template</h3>
+                        <p class="text-xs text-gray-500">Sent when courier pickup is verified.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between space-y-6">
+                <input type="hidden" name="action" value="save_template" />
+                
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 mb-1.5">Email Subject Line</label>
+                    <input
+                        type="text"
+                        name="email_subject_shipped"
+                        value={settings?.email_subject_shipped || "Your Gionee Order #{order_id} Has Been Shipped!"}
+                        class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                    />
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">HTML Email Template Code</label>
+                        <textarea
+                            name="email_template_shipped"
+                            id="modal_input_email_shipped"
+                            rows="16"
+                            class="w-full text-xs border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.email_template_shipped}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{order_id}">{"{order_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{tracking_no}">{"{tracking_no}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{tracking_url}">{"{tracking_url}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{courier_name}">{"{courier_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{address}">{"{address}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{city}">{"{city}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_email_shipped" data-tag="{year}">{"{year}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live HTML Iframe Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live Render Preview</span>
+                        <div class="border border-gray-200 rounded-2xl bg-gray-50 overflow-hidden shadow-inner h-[440px] flex flex-col">
+                            <div class="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 text-[11px] text-gray-500 font-semibold">
+                                <span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>
+                                <span class="ml-2 font-mono text-[10px]">Email Viewer Preview</span>
+                            </div>
+                            <iframe id="modal_preview_email_shipped" class="w-full flex-1 bg-white" frameborder="0"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal 3: WhatsApp Disconnect / Failure Alert Email Template -->
+    <div id="modal-email-whatsapp-failure" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-red-100 text-red-700 flex items-center justify-center font-bold text-sm">3</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure WhatsApp Disconnect Email Alert</h3>
+                        <p class="text-xs text-gray-500">Urgent notification dispatched when WhatsApp session disconnects or stops responding.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between space-y-6">
+                <input type="hidden" name="action" value="save_template" />
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Recipients (Comma-separated)</label>
+                        <input
+                            type="text"
+                            name="whatsapp_failure_alert_recipients"
+                            value={settings?.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}
+                            placeholder="support@gionee.com.pk, aashirblogging@gmail.com"
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Email Subject Line</label>
+                        <input
+                            type="text"
+                            name="whatsapp_failure_alert_subject"
+                            value={settings?.whatsapp_failure_alert_subject || "[URGENT] Gionee WhatsApp Service Disconnected"}
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                        />
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">HTML Email Template Code</label>
+                        <textarea
+                            name="whatsapp_failure_alert_template"
+                            id="modal_input_whatsapp_failure"
+                            rows="16"
+                            class="w-full text-xs border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.whatsapp_failure_alert_template}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{error_message}">{"{error_message}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{session_id}">{"{session_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{timestamp}">{"{timestamp}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{admin_url}">{"{admin_url}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{store_url}">{"{store_url}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_whatsapp_failure" data-tag="{year}">{"{year}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live HTML Iframe Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live Render Preview</span>
+                        <div class="border border-gray-200 rounded-2xl bg-gray-50 overflow-hidden shadow-inner h-[440px] flex flex-col">
+                            <div class="bg-gray-100 px-3 py-1.5 border-b border-gray-200 flex items-center gap-1.5 text-[11px] text-gray-500 font-semibold">
+                                <span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>
+                                <span class="ml-2 font-mono text-[10px]">Email Viewer Preview</span>
+                            </div>
+                            <iframe id="modal_preview_whatsapp_failure" class="w-full flex-1 bg-white" frameborder="0"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AdminLayout>
+
+<script>
+    const initEmailSettings = () => {
+        // Modal Open/Close handlers
+        const openModalButtons = document.querySelectorAll(".open-modal-btn");
+        const closeModalButtons = document.querySelectorAll(".close-modal-btn");
+        const allModals = document.querySelectorAll(".template-modal");
+
+        openModalButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const modalId = btn.getAttribute("data-modal-target");
+                const targetModal = document.getElementById(modalId);
+                if (targetModal) {
+                    targetModal.classList.remove("hidden");
+                    targetModal.classList.add("flex");
+                }
+            });
+        });
+
+        closeModalButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                allModals.forEach((m) => {
+                    m.classList.add("hidden");
+                    m.classList.remove("flex");
+                });
+            });
+        });
+
+        allModals.forEach((modal) => {
+            if (modal.dataset.bound) return;
+            modal.dataset.bound = "true";
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) {
+                    modal.classList.add("hidden");
+                    modal.classList.remove("flex");
+                }
+            });
+        });
+
+        // Insert Placeholder tag into active textarea
+        const insertTagButtons = document.querySelectorAll(".insert-tag");
+        insertTagButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const targetInputId = btn.getAttribute("data-target");
+                const tag = btn.getAttribute("data-tag");
+                const input = document.getElementById(targetInputId) as HTMLTextAreaElement;
+                if (input && tag) {
+                    const start = input.selectionStart || 0;
+                    const end = input.selectionEnd || 0;
+                    const val = input.value;
+                    input.value = val.substring(0, start) + tag + val.substring(end);
+                    input.focus();
+                    input.selectionStart = input.selectionEnd = start + tag.length;
+                    input.dispatchEvent(new Event("input"));
+                }
+            });
+        });
+
+        // Payload JSON View
+        const viewPayloadButtons = document.querySelectorAll("[data-view-payload-id]");
+        viewPayloadButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const logId = btn.getAttribute("data-view-payload-id");
+                const row = document.getElementById(`payload-row-${logId}`);
+                if (row) {
+                    if (row.classList.contains("hidden")) {
+                        row.classList.remove("hidden");
+                        btn.textContent = "Hide Logs";
+                    } else {
+                        row.classList.add("hidden");
+                        btn.textContent = "View Logs";
+                    }
+                }
+            });
+        });
+
+        // Format and render email preview in iframe
+        const formatEmailText = (text: string) => {
+            if (!text) return "";
+            
+            const mockItemsTable = `
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                        <span style="font-weight: 500; color: #111;">Gionee Handsfree Type-C (Pack of 2)</span><br/>
+                    </td>
+                    <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">1</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: right;">PKR 2,500</td>
+                </tr>
+            `;
+
+            const currentTimestamp = new Date().toLocaleString("en-PK", {
+                timeZone: "Asia/Karachi",
+                dateStyle: "medium",
+                timeStyle: "medium",
+            });
+
+            return text
+                .replace(/{customer_name}/g, "Ayesha Khan")
+                .replace(/{order_id}/g, "GPK09070")
+                .replace(/{items_table}/g, mockItemsTable)
+                .replace(/{subtotal}/g, "2,500")
+                .replace(/{shipping}/g, "250")
+                .replace(/{total}/g, "2,750")
+                .replace(/{address}/g, "House 412, Sector Y, DHA Phase 3")
+                .replace(/{city}/g, "Lahore")
+                .replace(/{phone}/g, "03001234567")
+                .replace(/{year}/g, new Date().getFullYear().toString())
+                .replace(/{tracking_no}/g, "SA7535276788")
+                .replace(/{tracking_url}/g, "https://gionee.com.pk/track-order/GPK09070/")
+                .replace(/{courier_name}/g, "Leopards Courier")
+                .replace(/{error_message}/g, "OpenWA API returned HTTP 400: Session &#39;d5434c82-a0da-4fa2-b0a6-c7673ef11c67&#39; is not active. Start the session first.")
+                .replace(/{session_id}/g, "d5434c82-a0da-4fa2-b0a6-c7673ef11c67")
+                .replace(/{timestamp}/g, currentTimestamp)
+                .replace(/{admin_url}/g, "https://gionee.com.pk/admin/settings/whatsapp/?tab=connection")
+                .replace(/{store_url}/g, "https://gionee.com.pk/");
+        };
+
+        const setupPreview = (inputId: string, previewId: string) => {
+            const input = document.getElementById(inputId) as HTMLTextAreaElement;
+            const iframe = document.getElementById(previewId) as HTMLIFrameElement;
+            
+            if (input && iframe && !input.dataset.bound) {
+                input.dataset.bound = "true";
+                
+                const update = () => {
+                    const rawHtml = input.value;
+                    const parsedHtml = formatEmailText(rawHtml);
+                    
+                    const iframeDoc = `
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <meta charset="utf-8">
+                            <style>
+                                body { margin: 0; padding: 20px; background: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+                            </style>
+                        </head>
+                        <body>${parsedHtml}</body>
+                        </html>
+                    `;
+                    
+                    iframe.srcdoc = iframeDoc;
+                };
+
+                input.addEventListener("input", update);
+                update(); // initial render
+            }
+        };
+
+        setupPreview("modal_input_email_placed", "modal_preview_email_placed");
+        setupPreview("modal_input_email_shipped", "modal_preview_email_shipped");
+        setupPreview("modal_input_whatsapp_failure", "modal_preview_whatsapp_failure");
+    };
+
+    initEmailSettings();
+    document.addEventListener("astro:page-load", initEmailSettings);
+</script>
+

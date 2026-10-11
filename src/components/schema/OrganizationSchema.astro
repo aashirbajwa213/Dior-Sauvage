@@ -1,0 +1,34 @@
+---
+const organizationSchema = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "Dior Sauvage Pakistan",
+    url: "https://sauvagedior.pk",
+    logo: "https://sauvagedior.pk/logo.png",
+    description:
+        "Authentic Christian Dior Sauvage Fragrances and Brand Leftover Lot Store in Pakistan with Open Parcel Check Warranty on Cash on Delivery.",
+    contactPoint: {
+        "@type": "ContactPoint",
+        telephone: "+92-311-2390620",
+        contactType: "Customer Support",
+        areaServed: "PK",
+        availableLanguage: ["English", "Urdu"],
+    },
+    address: {
+        "@type": "PostalAddress",
+        addressCountry: "PK",
+    },
+    aggregateRating: {
+        "@type": "AggregateRating",
+        ratingValue: "4.8",
+        reviewCount: "4890",
+        bestRating: "5",
+        worstRating: "1",
+    },
+};
+---
+
+<script
+    type="application/ld+json"
+    set:html={JSON.stringify(organizationSchema)}
+/>

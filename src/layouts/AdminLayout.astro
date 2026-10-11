@@ -1,0 +1,508 @@
+---
+import Layout from "./Layout.astro";
+import Icon from "../components/ui/Icon.astro";
+
+interface Props {
+    title: string;
+    activePage?: "dashboard" | "orders" | "customers" | "products" | "reviews" | "tracking" | "bi" | "chatbot" | "settings" | "courier" | "whatsapp";
+}
+
+const { title, activePage } = Astro.props;
+
+const db = Astro.locals.runtime?.env?.DB;
+let pendingReviewsCount = 0;
+if (db) {
+    try {
+        const pendingRes: any = await db.prepare("SELECT COUNT(*) as count FROM reviews WHERE is_visible = 0").first();
+        pendingReviewsCount = Number(pendingRes?.count) || 0;
+    } catch (e) {
+        // Table or column might not exist or error
+    }
+}
+---
+
+<Layout title={title} noindex={true} disableTracking={true}>
+    <!-- Immediate localStorage sidebar state sync to prevent FOUC -->
+    <script is:inline>
+        (function() {
+            try {
+                if (localStorage.getItem('admin-sidebar-collapsed') === 'true') {
+                    document.documentElement.classList.add('sidebar-init-collapsed');
+                }
+            } catch (e) {}
+        })();
+    </script>
+    <style is:inline>
+        /* Expanded state defaults */
+        #admin-sidebar { width: 16rem; }
+        .sidebar-text { opacity: 1; display: inline-block; white-space: nowrap; transition: opacity 0.2s ease; }
+        
+        /* Collapsed state (Desktop Only) */
+        @media (min-width: 768px) {
+            #admin-sidebar.collapsed { width: 4.5rem; }
+            #admin-sidebar.collapsed .sidebar-text { opacity: 0; width: 0; overflow: hidden; display: none; }
+            #admin-sidebar.collapsed .sidebar-link { justify-content: center; padding-left: 0; padding-right: 0; }
+        }
+ 
+        /* FOUC prevention */
+        @media (min-width: 768px) {
+            :global(.sidebar-init-collapsed) #admin-sidebar { width: 4.5rem !important; }
+            :global(.sidebar-init-collapsed) .sidebar-text { display: none !important; opacity: 0 !important; }
+            :global(.sidebar-init-collapsed) .sidebar-link { justify-content: center !important; padding-left: 0 !important; padding-right: 0 !important; }
+        }
+
+        .sidebar-dot-badge { display: none; }
+        @media (min-width: 768px) {
+            #admin-sidebar.collapsed .sidebar-dot-badge { display: block; }
+            :global(.sidebar-init-collapsed) #admin-sidebar .sidebar-dot-badge { display: block !important; }
+        }
+
+        /* Sleek Theme Scrollbar for All Elements in Admin Views */
+        :global(html),
+        :global(body),
+        #admin-sidebar,
+        aside,
+        :global(main),
+        :global(.overflow-x-auto),
+        :global(.overflow-y-auto) {
+            scrollbar-width: thin;
+            scrollbar-color: #CBD5E1 #F8FAFC;
+        }
+        :global(html)::-webkit-scrollbar,
+        :global(body)::-webkit-scrollbar,
+        #admin-sidebar::-webkit-scrollbar,
+        aside::-webkit-scrollbar,
+        :global(main)::-webkit-scrollbar,
+        :global(.overflow-x-auto)::-webkit-scrollbar,
+        :global(.overflow-y-auto)::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        :global(html)::-webkit-scrollbar-track,
+        :global(body)::-webkit-scrollbar-track,
+        #admin-sidebar::-webkit-scrollbar-track,
+        aside::-webkit-scrollbar-track,
+        :global(main)::-webkit-scrollbar-track,
+        :global(.overflow-x-auto)::-webkit-scrollbar-track,
+        :global(.overflow-y-auto)::-webkit-scrollbar-track {
+            background: #F8FAFC;
+        }
+        :global(html)::-webkit-scrollbar-thumb,
+        :global(body)::-webkit-scrollbar-thumb,
+        #admin-sidebar::-webkit-scrollbar-thumb,
+        aside::-webkit-scrollbar-thumb,
+        :global(main)::-webkit-scrollbar-thumb,
+        :global(.overflow-x-auto)::-webkit-scrollbar-thumb,
+        :global(.overflow-y-auto)::-webkit-scrollbar-thumb {
+            background-color: #CBD5E1;
+            border-radius: 9999px;
+        }
+        :global(html)::-webkit-scrollbar-thumb:hover,
+        :global(body)::-webkit-scrollbar-thumb:hover,
+        #admin-sidebar::-webkit-scrollbar-thumb:hover,
+        aside::-webkit-scrollbar-thumb:hover,
+        :global(main)::-webkit-scrollbar-thumb:hover,
+        :global(.overflow-x-auto)::-webkit-scrollbar-thumb:hover,
+        :global(.overflow-y-auto)::-webkit-scrollbar-thumb:hover {
+            background-color: #F97316;
+        }
+
+        /* Mobile specific fixes for admin tables and fonts */
+        @media (max-width: 767px) {
+            .admin-portal table th, .admin-portal table td {
+                padding-left: 0.5rem;
+                padding-right: 0.5rem;
+                font-size: 0.75rem;
+            }
+            .admin-portal .bg-white.p-6, .admin-portal .bg-white.p-8 {
+                padding: 1rem;
+            }
+            /* Reduce Headings */
+            .admin-portal .text-3xl { font-size: 1.5rem; line-height: 2rem; }
+            .admin-portal .text-2xl { font-size: 1.25rem; line-height: 1.75rem; }
+            .admin-portal .text-xl { font-size: 1.125rem; line-height: 1.75rem; }
+            
+            /* Reduce standard text */
+            .admin-portal .text-sm { font-size: 0.75rem; line-height: 1rem; }
+            .admin-portal .text-base { font-size: 0.875rem; line-height: 1.25rem; }
+            
+            /* Shrink inputs, selects, and buttons */
+            .admin-portal input[type="text"], 
+            .admin-portal input[type="date"], 
+            .admin-portal input[type="number"], 
+            .admin-portal input[type="email"], 
+            .admin-portal input[type="password"], 
+            .admin-portal select, 
+            .admin-portal button:not(#sidebar-toggle):not(#close-sidebar-btn) {
+                font-size: 0.75rem !important;
+                padding-top: 0.375rem !important;
+                padding-bottom: 0.375rem !important;
+            }
+        }
+    </style>
+ 
+    <div class="min-h-screen bg-gray-50 flex flex-col font-sans admin-portal">
+        <!-- Persistent Top Header -->
+        <header class="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+            <div class="w-full px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center h-16">
+                    <div class="flex items-center gap-2">
+                        <button id="sidebar-toggle" class="text-gray-500 hover:text-brand-orange p-2 rounded hover:bg-gray-50 transition-colors focus:outline-none md:mr-2" aria-label="Toggle Sidebar">
+                            <Icon name="menu" class="w-5 h-5" />
+                        </button>
+                        <a href="/admin/orders/" class="flex items-center gap-3">
+                            <img src="/logo.png" alt="Dior Sauvage Pakistan" class="h-8 w-auto" onerror="this.onerror=null; this.src='/images/placeholder.svg';" />
+                        </a>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <a href="/" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-gray-700 text-sm font-semibold flex items-center gap-1.5 hover:text-brand-orange transition-colors">
+                            Visit Site <Icon name="arrow-right" class="w-3.5 h-3.5" />
+                        </a>
+                        <a href="/admin/logout/" class="flex items-center gap-1.5 text-xs font-semibold text-gray-400 hover:text-red-500 bg-gray-50 hover:bg-red-50 border border-gray-200 hover:border-red-200 px-3 py-1.5 rounded-lg transition-all">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                            Logout
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </header>
+ 
+        <!-- Dynamic Layout: Sidebar & Content -->
+        <div class="flex-1 flex relative">
+            <!-- Mobile Overlay -->
+            <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden transition-opacity opacity-0 duration-300"></div>
+
+            <!-- Sidebar Navigation -->
+            <aside id="admin-sidebar" class="fixed inset-y-0 left-0 bg-white border-r border-gray-200 h-screen md:h-[calc(100vh-4rem)] z-50 md:z-40 transition-all duration-300 transform -translate-x-full md:relative md:translate-x-0 md:sticky md:top-16 overflow-y-auto shrink-0">
+                <div class="flex items-center justify-between p-4 md:hidden border-b border-gray-100">
+                    <img src="/logo.png" alt="Gionee Pakistan" class="h-6 w-auto" />
+                    <button id="close-sidebar-btn" class="text-gray-500 hover:text-brand-orange focus:outline-none">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-4 space-y-1">
+                    <a href="/admin/dashboard/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "dashboard" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="layout" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Dashboard</span>
+                    </a>
+                    <a href="/admin/orders/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "orders" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="shopping-cart" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Orders</span>
+                    </a>
+                    <a href="/admin/customers/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "customers" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="users" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Customers</span>
+                    </a>
+                    <a href="/admin/products/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "products" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="package" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Products</span>
+                    </a>
+                    <a href="/admin/bi/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "bi" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="chart-bar" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Intelligence</span>
+                    </a>
+                    <a href="/admin/reviews/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "reviews" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <div class="relative shrink-0 flex items-center justify-center">
+                            <Icon name="star" class="w-5 h-5 shrink-0" />
+                            {pendingReviewsCount > 0 && (
+                                <span class="sidebar-dot-badge absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-500 border-2 border-white rounded-full"></span>
+                            )}
+                        </div>
+                        <span class="sidebar-text flex-1">Reviews</span>
+                        {pendingReviewsCount > 0 && (
+                            <span class="sidebar-text inline-flex items-center justify-center px-2 py-0.5 text-[11px] font-bold bg-amber-500 text-white rounded-full ml-auto animate-pulse">
+                                {pendingReviewsCount}
+                            </span>
+                        )}
+                    </a>
+                    <a href="/admin/tracking/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "tracking" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="banknote" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">Payments & Return</span>
+                    </a>
+                    <a href="/admin/settings/courier/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "courier" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="truck" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">RS Courier Integration</span>
+                    </a>
+                    <a href="/admin/chatbot/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "chatbot" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <svg class="w-5 h-5 shrink-0 text-current" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
+                        <span class="sidebar-text">AI Support Bot</span>
+                    </a>
+                    <a href="/admin/settings/whatsapp/" class={`sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "whatsapp" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                        <Icon name="bot" class="w-5 h-5 shrink-0" />
+                        <span class="sidebar-text">WhatsApp Bot</span>
+                    </a>
+                    <div class="relative group">
+                        <button type="button" id="settings-menu-btn" class={`w-full sidebar-link cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-all ${activePage === "settings" ? "bg-brand-orange/10 text-brand-orange" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}>
+                            <Icon name="settings" class="w-5 h-5 shrink-0" />
+                            <span class="sidebar-text flex-1 text-left">Settings</span>
+                            <Icon name="chevron-down" class={`w-4 h-4 sidebar-text transition-transform duration-200 ${activePage === "settings" ? "rotate-180" : ""}`} id="settings-chevron" />
+                        </button>
+                        
+                        <div id="settings-submenu" class={`sidebar-text w-full overflow-hidden transition-all duration-300 ${activePage === "settings" ? "max-h-96" : "max-h-0"}`}>
+                            <div class="pl-11 pr-3 pt-1 pb-2 space-y-1">
+                                <a href="/admin/settings/general/" class={`block px-2 py-1.5 text-xs font-medium rounded transition-colors ${Astro.url.pathname.includes('/general') ? 'text-brand-orange bg-brand-orange/5' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}>General</a>
+                                <a href="/admin/settings/email/" class={`block px-2 py-1.5 text-xs font-medium rounded transition-colors ${Astro.url.pathname.includes('/email') ? 'text-brand-orange bg-brand-orange/5' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}>Email Templates</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content Container -->
+            <div class="flex-1 min-w-0 flex flex-col w-full overflow-hidden">
+                <main class="flex-1 w-full px-2 sm:px-4 lg:px-8 py-4 md:py-8 overflow-x-hidden">
+                    <slot />
+                </main>
+                
+                <!-- Common Admin Dashboard Footer -->
+                <footer class="bg-white border-t border-gray-200 py-6 mt-4">
+                    <div class="w-full px-4 text-center text-xs text-gray-400">
+                        &copy; {new Date().getFullYear()} Gionee Pakistan - Admin Portal. All rights reserved.
+                    </div>
+                </footer>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const initAdminLayout = () => {
+            const toggleBtn = document.getElementById("sidebar-toggle");
+            const sidebar = document.getElementById("admin-sidebar");
+            const overlay = document.getElementById("sidebar-overlay");
+            const closeBtn = document.getElementById("close-sidebar-btn");
+
+            if (toggleBtn && sidebar && !toggleBtn.dataset.bound) {
+                toggleBtn.dataset.bound = "true";
+                // Apply init class if stored state
+                if (document.documentElement.classList.contains("sidebar-init-collapsed")) {
+                    sidebar.classList.add("collapsed");
+                    document.documentElement.classList.remove("sidebar-init-collapsed");
+                }
+
+                const toggleSidebar = () => {
+                    const isMobile = window.innerWidth < 768;
+                    if (isMobile) {
+                        // Mobile logic: toggle translate
+                        const isOpen = !sidebar.classList.contains("-translate-x-full");
+                        if (isOpen) {
+                            sidebar.classList.add("-translate-x-full");
+                            overlay?.classList.add("hidden");
+                            overlay?.classList.remove("opacity-100");
+                            document.body.style.overflow = '';
+                        } else {
+                            sidebar.classList.remove("-translate-x-full");
+                            overlay?.classList.remove("hidden");
+                            setTimeout(() => overlay?.classList.add("opacity-100"), 10);
+                            document.body.style.overflow = 'hidden';
+                        }
+                    } else {
+                        // Desktop logic: toggle collapsed class
+                        const isCollapsed = sidebar.classList.toggle("collapsed");
+                        try {
+                            localStorage.setItem("admin-sidebar-collapsed", isCollapsed ? "true" : "false");
+                        } catch (e) {}
+                    }
+                };
+
+                toggleBtn.addEventListener("click", toggleSidebar);
+                overlay?.addEventListener("click", toggleSidebar);
+                closeBtn?.addEventListener("click", toggleSidebar);
+            }
+
+            const settingsMenuBtn = document.getElementById("settings-menu-btn");
+            const settingsSubmenu = document.getElementById("settings-submenu");
+
+            if (settingsMenuBtn && settingsSubmenu && !settingsMenuBtn.dataset.bound) {
+                settingsMenuBtn.dataset.bound = "true";
+
+                settingsMenuBtn.addEventListener("click", () => {
+                    const settingsChevron = document.getElementById("settings-chevron");
+                    const isClosed = settingsSubmenu.classList.contains("max-h-0");
+                    if (isClosed) {
+                        settingsSubmenu.classList.remove("max-h-0");
+                        settingsSubmenu.classList.add("max-h-96");
+                        if (settingsChevron) settingsChevron.classList.add("rotate-180");
+                    } else {
+                        settingsSubmenu.classList.remove("max-h-96");
+                        settingsSubmenu.classList.add("max-h-0");
+                        if (settingsChevron) settingsChevron.classList.remove("rotate-180");
+                    }
+                });
+            }
+
+            // Universal Themed Custom Dropdown Engine (Matches ColumnSelector UI)
+            const initAdminCustomSelects = () => {
+                const selects = document.querySelectorAll<HTMLSelectElement>("select.admin-select:not([data-custom-enhanced])");
+                selects.forEach((select) => {
+                    select.setAttribute("data-custom-enhanced", "true");
+                    select.classList.add("hidden");
+
+                    const isFullWidth = select.classList.contains("w-full");
+                    const container = document.createElement("div");
+                    container.className = `relative ${isFullWidth ? "w-full" : "inline-block"} admin-custom-select-container text-left`;
+
+                    // Trigger button matching ColumnSelector style
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "w-full inline-flex items-center justify-between gap-2 px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 shadow-xs transition-colors cursor-pointer select-none";
+                    btn.setAttribute("aria-haspopup", "listbox");
+                    btn.setAttribute("aria-expanded", "false");
+
+                    const labelSpan = document.createElement("span");
+                    labelSpan.className = "truncate text-gray-800 font-medium";
+                    const currentOpt = select.options[select.selectedIndex] || select.options[0];
+                    labelSpan.textContent = currentOpt ? currentOpt.textContent : "";
+
+                    const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                    chevron.setAttribute("class", "w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform duration-200");
+                    chevron.setAttribute("viewBox", "0 0 24 24");
+                    chevron.setAttribute("fill", "none");
+                    chevron.setAttribute("stroke", "currentColor");
+                    chevron.setAttribute("stroke-width", "2");
+                    chevron.setAttribute("stroke-linecap", "round");
+                    chevron.setAttribute("stroke-linejoin", "round");
+                    chevron.innerHTML = '<path d="m6 9 6 6 6-6"/>';
+
+                    btn.appendChild(labelSpan);
+                    btn.appendChild(chevron);
+
+                    // Dropdown Popover matching ColumnSelector UI
+                    const menu = document.createElement("div");
+                    menu.className = "hidden absolute left-0 top-full mt-1.5 min-w-full w-max max-w-xs bg-white rounded-xl shadow-lg border border-gray-200 ring-1 ring-black/5 p-1.5 space-y-0.5 z-50 focus:outline-none max-h-64 overflow-y-auto animate-in fade-in duration-100";
+                    menu.setAttribute("role", "listbox");
+
+                    function renderOptions() {
+                        menu.innerHTML = "";
+                        Array.from(select.options).forEach((opt, idx) => {
+                            const isSelected = select.selectedIndex === idx;
+                            const optBtn = document.createElement("button");
+                            optBtn.type = "button";
+                            optBtn.className = `w-full flex items-center justify-between gap-3 px-3 py-2 text-xs sm:text-sm rounded-lg text-left transition-colors cursor-pointer ${
+                                isSelected
+                                    ? "bg-orange-50/90 text-brand-orange font-semibold"
+                                    : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 font-medium"
+                            }`;
+
+                            const textSpan = document.createElement("span");
+                            textSpan.className = "truncate";
+                            textSpan.textContent = opt.textContent;
+                            optBtn.appendChild(textSpan);
+
+                            if (isSelected) {
+                                const checkSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                                checkSvg.setAttribute("class", "w-3.5 h-3.5 text-brand-orange shrink-0");
+                                checkSvg.setAttribute("viewBox", "0 0 24 24");
+                                checkSvg.setAttribute("fill", "none");
+                                checkSvg.setAttribute("stroke", "currentColor");
+                                checkSvg.setAttribute("stroke-width", "2.5");
+                                checkSvg.setAttribute("stroke-linecap", "round");
+                                checkSvg.setAttribute("stroke-linejoin", "round");
+                                checkSvg.innerHTML = '<polyline points="20 6 9 17 4 12"/>';
+                                optBtn.appendChild(checkSvg);
+                            }
+
+                            optBtn.addEventListener("click", (e) => {
+                                e.stopPropagation();
+                                select.selectedIndex = idx;
+                                labelSpan.textContent = opt.textContent;
+                                closeMenu();
+                                renderOptions();
+                                select.dispatchEvent(new Event("change", { bubbles: true }));
+                                select.dispatchEvent(new Event("input", { bubbles: true }));
+                            });
+
+                            menu.appendChild(optBtn);
+                        });
+                    }
+
+                    function openMenu() {
+                        // Close any other open dropdowns
+                        document.querySelectorAll<HTMLElement>(".admin-custom-select-container").forEach((c) => {
+                            if (c !== container) {
+                                c.querySelector<HTMLElement>('[role="listbox"]')?.classList.add("hidden");
+                                c.querySelector<SVGElement>("svg.rotate-180")?.classList.remove("rotate-180");
+                                c.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+                            }
+                        });
+
+                        // Position check for right screen boundary
+                        const rect = container.getBoundingClientRect();
+                        if (rect.right + 120 > window.innerWidth) {
+                            menu.classList.remove("left-0");
+                            menu.classList.add("right-0");
+                        } else {
+                            menu.classList.add("left-0");
+                            menu.classList.remove("right-0");
+                        }
+
+                        menu.classList.remove("hidden");
+                        chevron.classList.add("rotate-180");
+                        btn.setAttribute("aria-expanded", "true");
+                    }
+
+                    function closeMenu() {
+                        menu.classList.add("hidden");
+                        chevron.classList.remove("rotate-180");
+                        btn.setAttribute("aria-expanded", "false");
+                    }
+
+                    btn.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        if (menu.classList.contains("hidden")) {
+                            openMenu();
+                        } else {
+                            closeMenu();
+                        }
+                    });
+
+                    // Sync if select value changed programmatically
+                    select.addEventListener("change", () => {
+                        const opt = select.options[select.selectedIndex];
+                        if (opt) {
+                            labelSpan.textContent = opt.textContent;
+                            renderOptions();
+                        }
+                    });
+
+                    renderOptions();
+                    container.appendChild(btn);
+                    container.appendChild(menu);
+                    select.parentNode?.insertBefore(container, select.nextSibling);
+                });
+
+                // Attach outside click and keyboard Escape handler once
+                if (!document.body.dataset.adminSelectBound) {
+                    document.body.dataset.adminSelectBound = "true";
+                    document.addEventListener("click", (e) => {
+                        const target = e.target as HTMLElement;
+                        if (!target.closest(".admin-custom-select-container")) {
+                            document.querySelectorAll<HTMLElement>(".admin-custom-select-container").forEach((c) => {
+                                c.querySelector<HTMLElement>('[role="listbox"]')?.classList.add("hidden");
+                                c.querySelector<SVGElement>("svg.rotate-180")?.classList.remove("rotate-180");
+                                c.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+                            });
+                        }
+                    });
+
+                    document.addEventListener("keydown", (e) => {
+                        if (e.key === "Escape") {
+                            document.querySelectorAll<HTMLElement>(".admin-custom-select-container").forEach((c) => {
+                                c.querySelector<HTMLElement>('[role="listbox"]')?.classList.add("hidden");
+                                c.querySelector<SVGElement>("svg.rotate-180")?.classList.remove("rotate-180");
+                                c.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')?.setAttribute("aria-expanded", "false");
+                            });
+                        }
+                    });
+                }
+            };
+
+            initAdminCustomSelects();
+        };
+
+        // Run on initial load and view transitions
+        initAdminLayout();
+        document.addEventListener("astro:page-load", initAdminLayout);
+    </script>
+</Layout>

@@ -1,0 +1,35 @@
+---
+import Icon from "./ui/Icon.astro";
+
+interface Props {
+    question: string;
+    answer: string;
+    open?: boolean;
+}
+
+const { question, answer, open = false } = Astro.props;
+---
+
+<details
+    class="group border border-gray-200 rounded-lg bg-white [&_summary::-webkit-details-marker]:hidden"
+    open={open}
+>
+    <summary class="flex items-center justify-between p-4 cursor-pointer">
+        <h3
+            class="text-gray-900 font-medium group-hover:text-brand-orange transition-colors"
+        >
+            {question}
+        </h3>
+        <span
+            class="text-gray-500 group-open:rotate-180 transition-transform duration-300"
+        >
+            <Icon name="chevron-down" class="w-5 h-5" />
+        </span>
+    </summary>
+
+    <div class="px-4 pb-4 pt-0">
+        <p class="text-gray-600 leading-relaxed text-sm">
+            {answer}
+        </p>
+    </div>
+</details>

@@ -1,0 +1,107 @@
+---
+import Icon from "./ui/Icon.astro";
+
+interface Review {
+    rating: number;
+    title: string;
+    text: string;
+    author: string;
+    location: string;
+}
+
+interface Props {
+    title?: string;
+    subTitle?: string;
+    reviews: Review[];
+    bgClass?: string;
+}
+
+const {
+    title = "What Our Customers Say",
+    subTitle = "4.2/5 from 12,000+ Verified Buyers Across Pakistan",
+    reviews,
+    bgClass = "bg-gray-50",
+} = Astro.props;
+---
+
+<section class={`py-12 lg:py-20 ${bgClass}`}>
+    <div class="container mx-auto px-4 max-w-6xl">
+        <div class="text-center mb-12">
+            <h2 class="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-4 tracking-tight">{title}</h2>
+            <div
+                class="inline-flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm text-gray-900 font-bold border border-gray-100 mb-4"
+            >
+                <div class="flex">
+                    <Icon
+                        name="star"
+                        class="w-5 h-5 text-yellow-400 fill-current"
+                    />
+                    <Icon
+                        name="star"
+                        class="w-5 h-5 text-yellow-400 fill-current"
+                    />
+                    <Icon
+                        name="star"
+                        class="w-5 h-5 text-yellow-400 fill-current"
+                    />
+                    <Icon
+                        name="star"
+                        class="w-5 h-5 text-yellow-400 fill-current"
+                    />
+                    <Icon
+                        name="star"
+                        class="w-5 h-5 text-yellow-400 fill-current"
+                    />
+                </div>
+                <span>{subTitle.replace(/^[★\s]+/, '')}</span>
+            </div>
+            <p class="text-gray-600">
+                Real feedback from verified buyers across Pakistan.
+            </p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {
+                reviews.map((review) => (
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-1 mb-4">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                                <Icon
+                                    name="star"
+                                    class={`w-4 h-4 ${i < Math.floor(review.rating) ? "text-yellow-400 fill-current" : "text-gray-300"}`}
+                                />
+                            ))}
+                            <span class="ml-2 text-sm font-bold text-gray-900">
+                                {review.rating}
+                            </span>
+                        </div>
+
+                        <h3 class="font-bold text-gray-900 mb-3">
+                            {review.title}
+                        </h3>
+                        <p class="text-gray-600 text-sm mb-6 leading-relaxed">
+                            "{review.text}"
+                        </p>
+
+                        <div class="flex items-center gap-3 mt-auto pt-4 border-t border-gray-50">
+                            <div class="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-brand-orange font-bold text-xs">
+                                {review.author.charAt(0)}
+                            </div>
+                            <div>
+                                <p class="text-sm font-bold text-gray-900">
+                                    {review.author}
+                                </p>
+                                <p class="text-xs text-gray-500">
+                                    {review.location}
+                                </p>
+                            </div>
+                            <div class="ml-auto flex items-center gap-1 text-green-700 text-[10px] font-medium bg-green-50 px-2 py-1 rounded-full">
+                                <Icon name="check" class="w-3 h-3" /> Verified
+                            </div>
+                        </div>
+                    </div>
+                ))
+            }
+        </div>
+    </div>
+</section>

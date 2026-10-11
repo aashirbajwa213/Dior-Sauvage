@@ -1,0 +1,61 @@
+---
+interface Props {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    limit: number;
+}
+
+const { currentPage, totalPages, totalItems, limit } = Astro.props;
+
+// Generate query parameters for prev/next buttons safely
+const url = new URL(Astro.request.url);
+const searchParams = url.searchParams;
+
+const prevParams = new URLSearchParams(searchParams);
+prevParams.set("page", String(Math.max(1, currentPage - 1)));
+
+const nextParams = new URLSearchParams(searchParams);
+nextParams.set("page", String(Math.min(totalPages, currentPage + 1)));
+
+const startItem = totalItems === 0 ? 0 : (currentPage - 1) * limit + 1;
+const endItem = Math.min(currentPage * limit, totalItems);
+
+// Helper for limit options to preserve other filters but reset page to 1
+function getLimitUrl(newLimit: number) {
+    const params = new URLSearchParams(searchParams);
+    params.set("limit", String(newLimit));
+    params.set("page", "1");
+    return `?${params.toString()}`;
+}
+---
+
+<div class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 px-2 border-t border-gray-100 mt-2 bg-white rounded-b-xl">
+    <div class="text-sm text-gray-500">
+        Showing <span class="font-medium text-gray-900">{startItem}</span> to <span class="font-medium text-gray-900">{endItem}</span> of <span class="font-medium text-gray-900">{totalItems}</span> results
+    </div>
+    
+    <div class="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
+        <div class="flex items-center gap-2">
+            <label for="pagination-limit" class="text-sm text-gray-500">Rows per page:</label>
+            <select id="pagination-limit" class="pl-2 pr-8 py-1.5 rounded-md border border-gray-200 text-sm focus:outline-none focus:border-brand-orange bg-white cursor-pointer admin-portal" onchange="window.location.href = this.value">
+                <option value={getLimitUrl(20)} selected={limit === 20}>20</option>
+                <option value={getLimitUrl(30)} selected={limit === 30}>30</option>
+                <option value={getLimitUrl(50)} selected={limit === 50}>50</option>
+                <option value={getLimitUrl(100)} selected={limit === 100}>100</option>
+            </select>
+        </div>
+
+        <div class="flex items-center gap-1 bg-gray-50 rounded-lg p-1 border border-gray-200">
+            <a href={`?${prevParams.toString()}`} class={`p-1.5 rounded-md text-gray-500 hover:bg-white hover:text-gray-900 hover:shadow-sm transition-all ${currentPage <= 1 ? 'pointer-events-none opacity-40' : ''}`} aria-label="Previous page">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+            </a>
+            <span class="text-sm font-medium text-gray-700 px-3">
+                {currentPage} <span class="text-gray-400 font-normal">/</span> {totalPages || 1}
+            </span>
+            <a href={`?${nextParams.toString()}`} class={`p-1.5 rounded-md text-gray-500 hover:bg-white hover:text-gray-900 hover:shadow-sm transition-all ${currentPage >= totalPages ? 'pointer-events-none opacity-40' : ''}`} aria-label="Next page">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </a>
+        </div>
+    </div>
+</div>

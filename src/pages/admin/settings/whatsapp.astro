@@ -1,0 +1,1134 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import { getAllSettings, saveMultipleSettings } from "../../../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let successMsg = "";
+let activeTab = "templates";
+
+const url = new URL(Astro.request.url);
+if (url.searchParams.get("tab")) {
+    activeTab = url.searchParams.get("tab") || "templates";
+}
+
+let settings: any = null;
+let webhookLogs: any[] = [];
+
+function formatPkt(dateStr: string | null | undefined): string {
+    if (!dateStr) return "—";
+    try {
+        let clean = dateStr.trim();
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(clean)) {
+            clean = clean.replace(" ", "T") + "Z";
+        } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(clean)) {
+            clean = clean + "Z";
+        }
+        const d = new Date(clean);
+        if (isNaN(d.getTime())) return dateStr;
+        return d.toLocaleString("en-US", {
+            timeZone: "Asia/Karachi",
+            year: "numeric",
+            month: "short",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: true,
+        });
+    } catch {
+        return dateStr;
+    }
+}
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing.";
+} else {
+    try {
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "save_settings" || action === "save_template" || action === "save_connection") {
+                const settingsToSave: Record<string, string> = {};
+
+                if (formData.has("whatsapp_enabled")) {
+                    settingsToSave["whatsapp_enabled"] = formData.get("whatsapp_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_api_url")) {
+                    settingsToSave["whatsapp_api_url"] = (formData.get("whatsapp_api_url")?.toString() || "").trim().replace(/\/+$/, "");
+                }
+                if (formData.has("whatsapp_api_key")) {
+                    settingsToSave["whatsapp_api_key"] = formData.get("whatsapp_api_key")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_session_id")) {
+                    settingsToSave["whatsapp_session_id"] = (formData.get("whatsapp_session_id")?.toString() || "").trim();
+                }
+                if (formData.has("whatsapp_template_confirmation")) {
+                    settingsToSave["whatsapp_template_confirmation"] = formData.get("whatsapp_template_confirmation")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_confirmation_enabled")) {
+                    settingsToSave["whatsapp_confirmation_enabled"] = formData.get("whatsapp_confirmation_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_template_thank_you")) {
+                    settingsToSave["whatsapp_template_thank_you"] = formData.get("whatsapp_template_thank_you")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_thank_you_enabled")) {
+                    settingsToSave["whatsapp_thank_you_enabled"] = formData.get("whatsapp_thank_you_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_template_shipped")) {
+                    settingsToSave["whatsapp_template_shipped"] = formData.get("whatsapp_template_shipped")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_shipped_enabled")) {
+                    settingsToSave["whatsapp_shipped_enabled"] = formData.get("whatsapp_shipped_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_return_alert_enabled")) {
+                    settingsToSave["whatsapp_return_alert_enabled"] = formData.get("whatsapp_return_alert_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_return_alert_phone")) {
+                    settingsToSave["whatsapp_return_alert_phone"] = formData.get("whatsapp_return_alert_phone")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_template_returned")) {
+                    settingsToSave["whatsapp_template_returned"] = formData.get("whatsapp_template_returned")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_enabled")) {
+                    settingsToSave["whatsapp_failure_alert_enabled"] = formData.get("whatsapp_failure_alert_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_failure_alert_recipients")) {
+                    settingsToSave["whatsapp_failure_alert_recipients"] = formData.get("whatsapp_failure_alert_recipients")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_subject")) {
+                    settingsToSave["whatsapp_failure_alert_subject"] = formData.get("whatsapp_failure_alert_subject")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_template")) {
+                    settingsToSave["whatsapp_failure_alert_template"] = formData.get("whatsapp_failure_alert_template")?.toString().trim() || "";
+                }
+
+                const success = await saveMultipleSettings(db, settingsToSave);
+                if (success) {
+                    successMsg = "WhatsApp settings and templates saved successfully!";
+                } else {
+                    errorMsg = "Failed to save settings. Please try again.";
+                }
+            } else if (action === "clear_logs") {
+                try {
+                    await db.prepare(`DELETE FROM webhook_logs`).run();
+                    successMsg = "Webhook logs cleared successfully.";
+                } catch (err: any) {
+                    errorMsg = "Failed to clear logs: " + err.message;
+                }
+            }
+        }
+
+        settings = await getAllSettings(db);
+
+        // Ensure Webhook Logs table exists
+        await db.prepare(`
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sender TEXT,
+                message TEXT,
+                payload TEXT,
+                status TEXT,
+                response TEXT
+            )
+        `).run().catch(() => {});
+
+        const { results } = await db.prepare(`
+            SELECT * FROM webhook_logs 
+            ORDER BY timestamp DESC 
+            LIMIT 60
+        `).all();
+        webhookLogs = results || [];
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+const seoTitle = "WhatsApp Automation & Bot - Gionee Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="whatsapp">
+    <!-- Header -->
+    <div class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                    <span class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                            <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766 0-3.18-2.586-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86.174.086.275.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.144.39-.086s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.099.824z" />
+                        </svg>
+                    </span>
+                    WhatsApp Automation & Bot
+                </h1>
+                <span class={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${settings?.whatsapp_enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                    <span class={`w-1.5 h-1.5 rounded-full ${settings?.whatsapp_enabled ? 'bg-emerald-600 animate-pulse' : 'bg-gray-400'}`}></span>
+                    {settings?.whatsapp_enabled ? 'Engine Active' : 'Engine Paused'}
+                </span>
+            </div>
+            <p class="text-xs sm:text-sm text-gray-500 mt-1">Manage order lifecycle messaging, dynamic Spintax variations, live testing sandbox, and session connectivity.</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <a 
+                href="https://wa.rankmation.com/api/admin/queues?apiKey=owa_k1_15c1dceff7164843f379ed083a0590f66cfe47cc46f4197a9c3239620855d8cb" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors flex items-center gap-1.5 border border-gray-200"
+            >
+                <svg class="w-3.5 h-3.5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+                <span>BullMQ Queue Board</span>
+            </a>
+
+            <form method="POST" class="inline">
+                <input type="hidden" name="action" value="save_settings" />
+                <input type="hidden" name="whatsapp_enabled" value={settings?.whatsapp_enabled ? "0" : "1"} />
+                <button
+                    type="submit"
+                    class={`px-3.5 py-2 text-xs font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer ${
+                        settings?.whatsapp_enabled
+                            ? 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                >
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" />
+                    </svg>
+                    <span>{settings?.whatsapp_enabled ? 'Pause Engine' : 'Activate Engine'}</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-red-100 text-red-700 p-1.5 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {successMsg && (
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-emerald-100 text-emerald-700 p-1.5 rounded-full shrink-0">
+                <Icon name="check" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm text-emerald-800">Success</p>
+                <p class="text-xs mt-0.5 text-emerald-700">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Navigation Tabs (Modern Pill Bar) -->
+    <div class="mb-6 p-1.5 bg-gray-100/90 rounded-2xl border border-gray-200/80 flex flex-wrap items-center gap-1.5">
+        <a href="?tab=templates" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'templates' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <svg class={`w-4 h-4 shrink-0 ${activeTab === 'templates' ? 'text-brand-orange' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+            <span>Automations & Spintax</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'templates' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>5</span>
+        </a>
+        <a href="?tab=simulator" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'simulator' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <svg class={`w-4 h-4 shrink-0 ${activeTab === 'simulator' ? 'text-brand-orange' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16a2 2 0 002 2z" />
+            </svg>
+            <span>Live Message Sandbox</span>
+        </a>
+        <a href="?tab=antiban" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'antiban' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <svg class={`w-4 h-4 shrink-0 ${activeTab === 'antiban' ? 'text-brand-orange' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            <span>Anti-Ban Rules & Guide</span>
+        </a>
+        <a href="?tab=connection" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'connection' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <svg class={`w-4 h-4 shrink-0 ${activeTab === 'connection' ? 'text-brand-orange' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            </svg>
+            <span>Connection & Session</span>
+        </a>
+        <a href="?tab=logs" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <svg class={`w-4 h-4 shrink-0 ${activeTab === 'logs' ? 'text-brand-orange' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>Webhook Logs</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'logs' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>{webhookLogs.length}</span>
+        </a>
+    </div>
+
+    <!-- TAB 1: AUTOMATIONS & SPINTAX TEMPLATES -->
+    {activeTab === "templates" && settings && (
+        <div class="space-y-6">
+            <!-- Information Banner -->
+            <div class="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-4 flex items-start gap-3">
+                <div class="p-2 bg-blue-100 text-blue-700 rounded-xl shrink-0">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <div class="text-xs text-blue-900 leading-relaxed">
+                    <p class="font-bold text-sm text-blue-950 mb-0.5">Spintax & Dynamic Variations Engine Active</p>
+                    <p>Use curly brackets with pipes like <code class="bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded font-mono font-semibold">{"{Assalam-o-Alaikum|Hello|Hi}"}</code> or <code class="bg-blue-100 text-blue-900 px-1.5 py-0.5 rounded font-mono font-semibold">{"{Shukriya|Thank you|Regards}"}</code> anywhere in your templates. The engine randomly selects varied phrases for each customer so every outgoing message has a unique fingerprint, completely eliminating spam detection.</p>
+                </div>
+            </div>
+
+            <!-- FORM FOR SAVING ALL TEMPLATES -->
+            <form method="POST" class="space-y-6">
+                <input type="hidden" name="action" value="save_template" />
+
+                <!-- 1. Order Verification Request -->
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 font-bold text-sm flex items-center justify-center">1</span>
+                            <div>
+                                <h3 class="font-bold text-base text-gray-900">Order Verification Request</h3>
+                                <p class="text-xs text-gray-500">Sent immediately upon checkout asking customer to verify by replying "YES".</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer self-start sm:self-center">
+                            <input type="hidden" name="whatsapp_confirmation_enabled" value="0" />
+                            <input type="checkbox" name="whatsapp_confirmation_enabled" value="1" checked={settings.whatsapp_confirmation_enabled} class="sr-only peer" />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-2.5 text-xs font-semibold text-gray-700">Active</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Template Text (with Spintax)</label>
+                            <textarea
+                                name="whatsapp_template_confirmation"
+                                id="template_input_confirmation"
+                                rows="10"
+                                class="w-full text-xs font-mono border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange resize-y leading-relaxed bg-gray-50/50"
+                            >{settings?.whatsapp_template_confirmation}</textarea>
+
+                            <div class="mt-2.5 space-y-2">
+                                <div class="p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                                    <span class="text-[11px] font-semibold text-gray-700 block mb-1">Insert Variables:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{order_id}">{"{order_id}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{items}">{"{items}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{total_amount}">{"{total_amount}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{address}">{"{address}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange hover:border-brand-orange transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="{city}">{"{city}"}</button>
+                                    </div>
+                                </div>
+                                <div class="p-2.5 bg-orange-50/60 rounded-xl border border-orange-100">
+                                    <span class="text-[11px] font-semibold text-brand-orange block mb-1">Insert Anti-Ban Spintax:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-orange-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-100 transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="&#123;Assalam-o-Alaikum|Hello|Hi&#125;">Greeting Spintax</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-orange-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-100 transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="&#123;Shukriya|Thank you|Bohat shukriya&#125;">Closing Spintax</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-orange-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-100 transition-colors cursor-pointer" data-target="template_input_confirmation" data-tag="&#123;Option 1|Option 2|Option 3&#125;">Custom Spintax</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live WhatsApp Mockup -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-semibold text-gray-700">Live WhatsApp Preview</span>
+                                <button type="button" class="spin-preview-btn text-xs font-semibold text-brand-orange hover:underline cursor-pointer flex items-center gap-1" data-source="template_input_confirmation" data-dest="preview_confirmation">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span>Spin Variation</span>
+                                </button>
+                            </div>
+                            <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-md border border-gray-800">
+                                <div class="bg-[#202c33] px-3.5 py-2 flex items-center gap-2.5">
+                                    <div class="w-7 h-7 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                    <div>
+                                        <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                        <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                    </div>
+                                </div>
+                                <div class="p-3.5 min-h-[190px] flex flex-col justify-end bg-repeat" style="background-image: radial-gradient(#202c33 1px, transparent 1px); background-size: 16px 16px;">
+                                    <div id="preview_confirmation" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3 shadow-sm whitespace-pre-wrap font-sans"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Order Confirmed (Thank You) -->
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 font-bold text-sm flex items-center justify-center">2</span>
+                            <div>
+                                <h3 class="font-bold text-base text-gray-900">Order Confirmed (Thank You Notice)</h3>
+                                <p class="text-xs text-gray-500">Sent immediately when customer replies "YES" via WhatsApp or Webhook.</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer self-start sm:self-center">
+                            <input type="hidden" name="whatsapp_thank_you_enabled" value="0" />
+                            <input type="checkbox" name="whatsapp_thank_you_enabled" value="1" checked={settings.whatsapp_thank_you_enabled} class="sr-only peer" />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-2.5 text-xs font-semibold text-gray-700">Active</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Template Text (with Spintax)</label>
+                            <textarea
+                                name="whatsapp_template_thank_you"
+                                id="template_input_thank_you"
+                                rows="8"
+                                class="w-full text-xs font-mono border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange resize-y leading-relaxed bg-gray-50/50"
+                            >{settings?.whatsapp_template_thank_you}</textarea>
+
+                            <div class="mt-2.5 space-y-2">
+                                <div class="p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                                    <span class="text-[11px] font-semibold text-gray-700 block mb-1">Insert Variables:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_thank_you" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_thank_you" data-tag="{order_id}">{"{order_id}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_thank_you" data-tag="{total_amount}">{"{total_amount}"}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live WhatsApp Mockup -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-semibold text-gray-700">Live WhatsApp Preview</span>
+                                <button type="button" class="spin-preview-btn text-xs font-semibold text-brand-orange hover:underline cursor-pointer flex items-center gap-1" data-source="template_input_thank_you" data-dest="preview_thank_you">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span>Spin Variation</span>
+                                </button>
+                            </div>
+                            <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-md border border-gray-800">
+                                <div class="bg-[#202c33] px-3.5 py-2 flex items-center gap-2.5">
+                                    <div class="w-7 h-7 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                    <div>
+                                        <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                        <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                    </div>
+                                </div>
+                                <div class="p-3.5 min-h-[150px] flex flex-col justify-end bg-repeat" style="background-image: radial-gradient(#202c33 1px, transparent 1px); background-size: 16px 16px;">
+                                    <div id="preview_thank_you" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3 shadow-sm whitespace-pre-wrap font-sans"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Order Dispatched & Tracking -->
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 font-bold text-sm flex items-center justify-center">3</span>
+                            <div>
+                                <h3 class="font-bold text-base text-gray-900">Order Dispatched & Tracking Link</h3>
+                                <p class="text-xs text-gray-500">Sent when courier tracking number is booked or parcel is marked as Shipped.</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer self-start sm:self-center">
+                            <input type="hidden" name="whatsapp_shipped_enabled" value="0" />
+                            <input type="checkbox" name="whatsapp_shipped_enabled" value="1" checked={settings.whatsapp_shipped_enabled} class="sr-only peer" />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-2.5 text-xs font-semibold text-gray-700">Active</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Template Text (with Spintax)</label>
+                            <textarea
+                                name="whatsapp_template_shipped"
+                                id="template_input_shipped"
+                                rows="8"
+                                class="w-full text-xs font-mono border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange resize-y leading-relaxed bg-gray-50/50"
+                            >{settings?.whatsapp_template_shipped}</textarea>
+
+                            <div class="mt-2.5 space-y-2">
+                                <div class="p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                                    <span class="text-[11px] font-semibold text-gray-700 block mb-1">Insert Variables:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_shipped" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_shipped" data-tag="{order_id}">{"{order_id}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_shipped" data-tag="{tracking_no}">{"{tracking_no}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_shipped" data-tag="{courier_name}">{"{courier_name}"}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live WhatsApp Mockup -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-semibold text-gray-700">Live WhatsApp Preview</span>
+                                <button type="button" class="spin-preview-btn text-xs font-semibold text-brand-orange hover:underline cursor-pointer flex items-center gap-1" data-source="template_input_shipped" data-dest="preview_shipped">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span>Spin Variation</span>
+                                </button>
+                            </div>
+                            <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-md border border-gray-800">
+                                <div class="bg-[#202c33] px-3.5 py-2 flex items-center gap-2.5">
+                                    <div class="w-7 h-7 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                    <div>
+                                        <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                        <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                    </div>
+                                </div>
+                                <div class="p-3.5 min-h-[150px] flex flex-col justify-end bg-repeat" style="background-image: radial-gradient(#202c33 1px, transparent 1px); background-size: 16px 16px;">
+                                    <div id="preview_shipped" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3 shadow-sm whitespace-pre-wrap font-sans"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Returned Parcel Escalation Alert -->
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 font-bold text-sm flex items-center justify-center">4</span>
+                            <div>
+                                <h3 class="font-bold text-base text-gray-900">Returned Parcel Alert (Internal Support)</h3>
+                                <p class="text-xs text-gray-500">Sent to admin/support team WhatsApp number when a courier marks parcel as returned.</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer self-start sm:self-center">
+                            <input type="hidden" name="whatsapp_return_alert_enabled" value="0" />
+                            <input type="checkbox" name="whatsapp_return_alert_enabled" value="1" checked={settings.whatsapp_return_alert_enabled} class="sr-only peer" />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-2.5 text-xs font-semibold text-gray-700">Active</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                        <div>
+                            <div class="mb-3">
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Recipient Support WhatsApp Number</label>
+                                <input
+                                    type="text"
+                                    name="whatsapp_return_alert_phone"
+                                    value={settings?.whatsapp_return_alert_phone || "03112390620"}
+                                    placeholder="03112390620"
+                                    class="w-full text-xs border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                                />
+                            </div>
+
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Alert Template (with Spintax)</label>
+                            <textarea
+                                name="whatsapp_template_returned"
+                                id="template_input_returned"
+                                rows="6"
+                                class="w-full text-xs font-mono border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange resize-y leading-relaxed bg-gray-50/50"
+                            >{settings?.whatsapp_template_returned}</textarea>
+
+                            <div class="mt-2.5 space-y-2">
+                                <div class="p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                                    <span class="text-[11px] font-semibold text-gray-700 block mb-1">Insert Variables:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{order_id}">{"{order_id}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{city}">{"{city}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{tracking_no}">{"{tracking_no}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{courier_name}">{"{courier_name}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{return_reason}">{"{return_reason}"}</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-gray-700 hover:text-brand-orange cursor-pointer" data-target="template_input_returned" data-tag="{orders_list}">{"{orders_list}"}</button>
+                                    </div>
+                                </div>
+                                <div class="p-2.5 bg-orange-50/60 rounded-xl border border-orange-100">
+                                    <span class="text-[11px] font-semibold text-brand-orange block mb-1">Insert Spintax:</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-orange-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-100 cursor-pointer" data-target="template_input_returned" data-tag="&#123;⚠️ Return Alert|🚨 Urgent Return Notice&#125;">Alert Title Spintax</button>
+                                        <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-orange-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-100 cursor-pointer" data-target="template_input_returned" data-tag="&#123;Option 1|Option 2|Option 3&#125;">Custom Spintax</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Live WhatsApp Mockup -->
+                        <div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs font-semibold text-gray-700">Alert Preview</span>
+                                <button type="button" class="spin-preview-btn text-xs font-semibold text-brand-orange hover:underline cursor-pointer flex items-center gap-1" data-source="template_input_returned" data-dest="preview_returned">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    <span>Spin Variation</span>
+                                </button>
+                            </div>
+                            <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-md border border-gray-800">
+                                <div class="bg-[#202c33] px-3.5 py-2 flex items-center gap-2.5">
+                                    <div class="w-7 h-7 bg-amber-500 rounded-full flex items-center justify-center text-white font-bold text-xs">!</div>
+                                    <div>
+                                        <div class="text-white text-xs font-semibold">Gionee Operations Alert</div>
+                                        <div class="text-[#8696a0] text-[10px]">High Priority Notification</div>
+                                    </div>
+                                </div>
+                                <div class="p-3.5 min-h-[150px] flex flex-col justify-end bg-repeat" style="background-image: radial-gradient(#202c33 1px, transparent 1px); background-size: 16px 16px;">
+                                    <div id="preview_returned" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3 shadow-sm whitespace-pre-wrap font-sans"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Session Failure Email Alert -->
+                <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-100">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-xl bg-red-100 text-red-700 font-bold text-sm flex items-center justify-center">5</span>
+                            <div>
+                                <h3 class="font-bold text-base text-gray-900">Session Failure Email Alert</h3>
+                                <p class="text-xs text-gray-500">Dispatches an instant emergency email to your team when WhatsApp disconnects.</p>
+                            </div>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer self-start sm:self-center">
+                            <input type="hidden" name="whatsapp_failure_alert_enabled" value="0" />
+                            <input type="checkbox" name="whatsapp_failure_alert_enabled" value="1" checked={settings.whatsapp_failure_alert_enabled} class="sr-only peer" />
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:bg-emerald-500 transition-colors"></div>
+                            <span class="absolute top-0.5 left-0.5 bg-white border border-gray-300 rounded-full h-5 w-5 transition-transform duration-200 ease-in-out peer-checked:translate-x-5 peer-checked:border-white shadow-xs pointer-events-none"></span>
+                            <span class="ml-2.5 text-xs font-semibold text-gray-700">Active</span>
+                        </label>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Recipients (Comma-separated)</label>
+                            <input
+                                type="text"
+                                name="whatsapp_failure_alert_recipients"
+                                value={settings?.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}
+                                class="w-full text-xs border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Email Subject Line</label>
+                            <input
+                                type="text"
+                                name="whatsapp_failure_alert_subject"
+                                value={settings?.whatsapp_failure_alert_subject || "[URGENT] Gionee WhatsApp Automation Service Offline"}
+                                class="w-full text-xs border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Save Bar -->
+                <div class="sticky bottom-4 z-20 bg-white/95 backdrop-blur-md p-4 rounded-2xl border border-gray-200 shadow-xl flex items-center justify-between">
+                    <p class="text-xs text-gray-500">Changes will take effect immediately for all upcoming orders & webhooks.</p>
+                    <button type="submit" class="px-6 py-2.5 bg-brand-orange text-white text-xs font-bold rounded-xl hover:bg-orange-600 transition-colors shadow-sm cursor-pointer flex items-center gap-1.5">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span>Save All Automations & Templates</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    )}
+
+    <!-- TAB 2: LIVE MESSAGE SANDBOX (TESTER) -->
+    {activeTab === "simulator" && (
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <div class="bg-white p-6 sm:p-7 rounded-2xl border border-gray-200 shadow-sm space-y-6">
+                <div>
+                    <h2 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-brand-orange" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16a2 2 0 002 2z" />
+                        </svg>
+                        Live Single-Number WhatsApp Sandbox
+                    </h2>
+                    <p class="text-xs text-gray-500 mt-1">Test any template or custom Spintax string directly on your own real WhatsApp number with simulated order variables.</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Target Phone Number</label>
+                        <input
+                            type="text"
+                            id="sandbox_phone"
+                            placeholder="03112390620 or 923112390620"
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Select Preset Template to Test</label>
+                        <select id="sandbox_template_select" class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange bg-white">
+                            <option value="confirmation">1. Order Confirmation Request</option>
+                            <option value="thank_you">2. Order Confirmed (Thank You)</option>
+                            <option value="shipped">3. Order Dispatched & Tracking Link</option>
+                            <option value="returned">4. Returned Parcel Alert</option>
+                            <option value="custom">5. Custom Spintax Message (Write below)</option>
+                        </select>
+                    </div>
+
+                    <div id="sandbox_custom_box" class="hidden">
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Custom Message Text</label>
+                        <textarea
+                            id="sandbox_custom_text"
+                            rows="4"
+                            placeholder="{Assalam-o-Alaikum|Hello|Hi} *{customer_name}*, this is a test message from Gionee Store!"
+                            class="w-full text-xs font-mono border border-gray-200 rounded-xl p-3 focus:outline-none focus:border-brand-orange"
+                        ></textarea>
+                    </div>
+
+                    <button
+                        type="button"
+                        id="sandbox_send_btn"
+                        class="w-full py-3 bg-brand-orange hover:bg-orange-600 text-white font-bold text-xs sm:text-sm rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
+                        <span>Send Test WhatsApp Message</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right: Real-time Dispatch Terminal Console -->
+            <div class="bg-white p-6 sm:p-7 rounded-2xl border border-gray-200 shadow-sm space-y-4 flex flex-col h-full">
+                <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <h3 class="text-sm font-bold text-gray-900">Sandbox Dispatch Terminal</h3>
+                    </div>
+                    <span class="text-[11px] font-mono text-gray-400">Live API Execution</span>
+                </div>
+
+                <div id="sandbox_result" class="p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap leading-relaxed min-h-[220px] bg-[#0b141a] border-gray-800 text-emerald-400 overflow-y-auto">
+Ready for testing.
+Enter a target phone number on the left and click "Send Test WhatsApp Message".
+                </div>
+
+                <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-[11px] text-gray-500">
+                    <strong>Note:</strong> Messages sent from this sandbox use your configured OpenWA session and simulate real customer checkout parameters with dynamic Spintax rotation.
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- TAB 3: ANTI-BAN RULES & GUIDE -->
+    {activeTab === "antiban" && (
+        <div class="space-y-6 w-full">
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-7 space-y-6">
+                <div>
+                    <h2 class="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                        Anti-Ban Architecture & Protection Standards
+                    </h2>
+                    <p class="text-xs text-gray-500 mt-0.5">How your Gionee automation stack ensures 100% compliant delivery and prevents WhatsApp account bans.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/50 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center justify-center">1</span>
+                            <h4 class="font-bold text-xs text-gray-900">Baileys WebSocket Protocol</h4>
+                        </div>
+                        <p class="text-xs text-gray-600 leading-relaxed">
+                            No headless Chromium browser is executed on your VPS. Baileys connects directly using WhatsApp's official multi-device protocol, leaving zero detectable browser fingerprints.
+                        </p>
+                    </div>
+
+                    <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/50 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-lg bg-blue-100 text-blue-800 text-xs font-bold flex items-center justify-center">2</span>
+                            <h4 class="font-bold text-xs text-gray-900">Redis & BullMQ Send Pacing</h4>
+                        </div>
+                        <p class="text-xs text-gray-600 leading-relaxed">
+                            Messages are strictly queued with humanized jitter delays (1 message per 2–5 seconds). Outgoing bursts are flattened so your number never blasts concurrent requests.
+                        </p>
+                    </div>
+
+                    <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/50 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold flex items-center justify-center">3</span>
+                            <h4 class="font-bold text-xs text-gray-900">Simulated Typing Presence</h4>
+                        </div>
+                        <p class="text-xs text-gray-600 leading-relaxed">
+                            Before dispatching any message, OpenWA simulates a composing state (typing indicator) for up to 5,000ms, matching real human texting behavior.
+                        </p>
+                    </div>
+
+                    <div class="p-4 rounded-xl border border-gray-200 bg-gray-50/50 space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold flex items-center justify-center">4</span>
+                            <h4 class="font-bold text-xs text-gray-900">Dynamic Spintax Variations</h4>
+                        </div>
+                        <p class="text-xs text-gray-600 leading-relaxed">
+                            Every message contains dynamic phrasing permutations, ensuring no two messages share the exact same cryptographic hash.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Number Warmup Checklist -->
+                <div class="p-4 rounded-xl bg-orange-50/70 border border-orange-200 space-y-2">
+                    <h4 class="font-bold text-xs text-brand-orange uppercase tracking-wider">New SIM / Number Warm-Up Guide</h4>
+                    <ul class="text-xs text-gray-700 space-y-1.5 list-disc pl-4">
+                        <li><strong>Days 1–3:</strong> Keep outbound volume under 15–20 messages per day.</li>
+                        <li><strong>Inbound Trust:</strong> Message 5–10 friends/team members and have them reply back to establish a two-way trust score.</li>
+                        <li><strong>Immediate YES Flow:</strong> Always prompt customers for "YES" confirmation. Two-way replies elevate the number's WhatsApp credibility score.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- TAB 4: API & SESSION CONNECTION -->
+    {activeTab === "connection" && settings && (
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <form method="POST" class="bg-white p-6 sm:p-7 rounded-2xl border border-gray-200 shadow-sm space-y-6">
+                <input type="hidden" name="action" value="save_connection" />
+
+                <div class="pb-3 border-b border-gray-100">
+                    <h2 class="text-base font-bold text-gray-900">OpenWA VPS API Connection</h2>
+                    <p class="text-xs text-gray-500 mt-0.5">Configure your self-hosted OpenWA instance running on Oracle Cloud.</p>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">OpenWA Base URL</label>
+                        <input
+                            type="url"
+                            name="whatsapp_api_url"
+                            value={settings?.whatsapp_api_url || "https://wa.rankmation.com"}
+                            placeholder="https://wa.rankmation.com"
+                            required
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange font-mono"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">API Key Header (X-API-Key)</label>
+                        <input
+                            type="password"
+                            name="whatsapp_api_key"
+                            value={settings?.whatsapp_api_key || ""}
+                            placeholder="owa_k1_..."
+                            required
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange font-mono"
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1">Session ID</label>
+                        <input
+                            type="text"
+                            name="whatsapp_session_id"
+                            value={settings?.whatsapp_session_id || "default"}
+                            placeholder="default"
+                            required
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange font-mono"
+                        />
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-gray-100 flex justify-end">
+                    <button type="submit" class="px-6 py-2.5 bg-brand-orange text-white text-xs font-bold rounded-xl hover:bg-orange-600 transition-colors shadow-sm cursor-pointer">
+                        Save Connection Settings
+                    </button>
+                </div>
+            </form>
+
+            <!-- Right Column: Session Health Monitor & Diagnostic Card -->
+            <div class="bg-white p-6 sm:p-7 rounded-2xl border border-gray-200 shadow-sm space-y-6">
+                <div class="flex items-center justify-between pb-3 border-b border-gray-100">
+                    <div>
+                        <h3 class="text-base font-bold text-gray-900">Session Diagnostics & Health</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">Live status verification and queue access.</p>
+                    </div>
+                    <button
+                        type="button"
+                        id="ping_session_btn"
+                        class="px-3.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors border border-gray-200 cursor-pointer flex items-center gap-1.5"
+                    >
+                        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span>Check Live Status</span>
+                    </button>
+                </div>
+
+                <div id="session_status_box" class="p-4 rounded-xl border text-xs font-mono bg-gray-50 border-gray-200 text-gray-600 leading-relaxed">
+                    Click "Check Live Status" above to ping your OpenWA VPS instance and verify session connectivity.
+                </div>
+
+                <div class="space-y-3 pt-2">
+                    <div class="p-3.5 rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-bold text-gray-800 block">WhatsApp Engine</span>
+                            <span class="text-[11px] text-gray-500">Baileys WebSocket Protocol (Anti-Ban)</span>
+                        </div>
+                        <span class="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold font-mono">baileys</span>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl border border-gray-100 bg-gray-50 flex items-center justify-between">
+                        <div>
+                            <span class="text-xs font-bold text-gray-800 block">BullMQ Queue Board</span>
+                            <span class="text-[11px] text-gray-500">View real-time pending, completed, and delayed jobs</span>
+                        </div>
+                        <a
+                            href="https://wa.rankmation.com/api/admin/queues?apiKey=owa_k1_15c1dceff7164843f379ed083a0590f66cfe47cc46f4197a9c3239620855d8cb"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="px-3 py-1.5 bg-brand-orange hover:bg-orange-600 text-white rounded-lg text-xs font-bold transition-colors"
+                        >
+                            Open Board &rarr;
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- TAB 5: WEBHOOK & ACTIVITY LOGS -->
+    {activeTab === "logs" && (
+        <div class="space-y-4">
+            <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div class="p-4 sm:px-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/50">
+                    <div>
+                        <h2 class="font-bold text-base text-gray-900">Webhook Activity Logs ({webhookLogs.length})</h2>
+                        <p class="text-xs text-gray-500 mt-0.5">Incoming customer replies (YES/NO) and automated webhook dispatch receipts.</p>
+                    </div>
+                    {webhookLogs.length > 0 && (
+                        <form method="POST" onsubmit="return confirm('Clear all webhook logs?');">
+                            <input type="hidden" name="action" value="clear_logs" />
+                            <button type="submit" class="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold rounded-lg transition-colors border border-red-200 cursor-pointer">
+                                Clear Logs
+                            </button>
+                        </form>
+                    )}
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr class="bg-gray-50 text-gray-500 uppercase text-[11px] font-semibold border-b border-gray-200">
+                                <th class="py-3 px-4">Time (PKT)</th>
+                                <th class="py-3 px-4">Sender / Phone</th>
+                                <th class="py-3 px-4">Customer Message</th>
+                                <th class="py-3 px-4">Status</th>
+                                <th class="py-3 px-4">Response Action</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 font-mono">
+                            {webhookLogs.length === 0 ? (
+                                <tr>
+                                    <td colspan="5" class="py-8 text-center text-gray-400 text-xs font-sans">
+                                        No webhook logs recorded yet.
+                                    </td>
+                                </tr>
+                            ) : (
+                                webhookLogs.map((log) => (
+                                    <tr class="hover:bg-gray-50/70 transition-colors">
+                                        <td class="py-3 px-4 text-gray-500 whitespace-nowrap">{formatPkt(log.timestamp)}</td>
+                                        <td class="py-3 px-4 font-bold text-gray-800">{log.sender}</td>
+                                        <td class="py-3 px-4 text-gray-700 max-w-[200px] truncate">{log.message || "—"}</td>
+                                        <td class="py-3 px-4">
+                                            <span class={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                                                log.status === 'success' || log.status === 'verified' ? 'bg-green-100 text-green-800' :
+                                                log.status === 'ignored' ? 'bg-gray-100 text-gray-700' : 'bg-red-100 text-red-800'
+                                            }`}>
+                                                {log.status}
+                                            </span>
+                                        </td>
+                                        <td class="py-3 px-4 text-gray-600 max-w-[250px] truncate">{log.response || "—"}</td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- CLIENT SCRIPT FOR LIVE PREVIEWS, TAG INSERTION, AND SANDBOX -->
+    <script is:inline>
+        // Tag Insertion
+        document.querySelectorAll(".insert-tag").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const targetId = btn.getAttribute("data-target");
+                const tag = btn.getAttribute("data-tag");
+                const targetEl = document.getElementById(targetId);
+                if (targetEl && tag) {
+                    const start = targetEl.selectionStart;
+                    const end = targetEl.selectionEnd;
+                    const text = targetEl.value;
+                    targetEl.value = text.substring(0, start) + tag + text.substring(end);
+                    targetEl.selectionStart = targetEl.selectionEnd = start + tag.length;
+                    targetEl.focus();
+                    targetEl.dispatchEvent(new Event("input"));
+                }
+            });
+        });
+
+        // Simple Client Spintax Engine for Previews
+        function spinClient(text) {
+            if (!text) return "";
+            const regex = /\{([^{}]+?\|[^{}]+?)\}/g;
+            let spun = text;
+            let limit = 0;
+            while (regex.test(spun) && limit < 10) {
+                spun = spun.replace(regex, (_, match) => {
+                    const options = match.split("|").map(s => s.trim());
+                    return options[Math.floor(Math.random() * options.length)];
+                });
+                limit++;
+            }
+            return spun;
+        }
+
+        function updatePreview(sourceId, destId) {
+            const src = document.getElementById(sourceId);
+            const dst = document.getElementById(destId);
+            if (!src || !dst) return;
+
+            let val = src.value || "";
+            val = val.replace(/\{customer_name\}/gi, "Muhammad Ali")
+                     .replace(/\{order_id\}/gi, "GPK09999")
+                     .replace(/\{total_amount\}/gi, "1,499")
+                     .replace(/\{total\}/gi, "1,499")
+                     .replace(/\{city\}/gi, "Lahore")
+                     .replace(/\{address\}/gi, "House 12, Street 4, Gulberg III, Lahore")
+                     .replace(/\{items\}/gi, "- Gionee Handsfree Original (Type-C) x1")
+                     .replace(/\{tracking_no\}/gi, "SA7540893000")
+                     .replace(/\{courier_name\}/gi, "RS Courier")
+                     .replace(/\{count\}/gi, "1")
+                     .replace(/\{return_reason\}/gi, "Customer refused parcel / Address incomplete")
+                     .replace(/\{orders_list\}/gi, "*1. Order #GPK09999*\n• *Name:* Muhammad Ali\n• *Phone:* 03112390620\n• *City:* Lahore\n• *Tracking:* SA7540893000 (RS Courier)\n• *Return Reason:* Customer Refused");
+
+            // Resolve Spintax
+            val = spinClient(val);
+            dst.textContent = val || "(Empty Template)";
+        }
+
+        // Initialize and bind previews
+        const previewPairs = [
+            { src: "template_input_confirmation", dst: "preview_confirmation" },
+            { src: "template_input_thank_you", dst: "preview_thank_you" },
+            { src: "template_input_shipped", dst: "preview_shipped" },
+            { src: "template_input_returned", dst: "preview_returned" }
+        ];
+
+        previewPairs.forEach(p => {
+            const el = document.getElementById(p.src);
+            if (el) {
+                el.addEventListener("input", () => updatePreview(p.src, p.dst));
+                updatePreview(p.src, p.dst);
+            }
+        });
+
+        document.querySelectorAll(".spin-preview-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                const src = btn.getAttribute("data-source");
+                const dst = btn.getAttribute("data-dest");
+                updatePreview(src, dst);
+            });
+        });
+
+        // Sandbox Preset Switcher
+        const templateSelect = document.getElementById("sandbox_template_select");
+        const customBox = document.getElementById("sandbox_custom_box");
+        if (templateSelect && customBox) {
+            templateSelect.addEventListener("change", () => {
+                if (templateSelect.value === "custom") {
+                    customBox.classList.remove("hidden");
+                } else {
+                    customBox.classList.add("hidden");
+                }
+            });
+        }
+
+        // Sandbox Send Test
+        const sendBtn = document.getElementById("sandbox_send_btn");
+        const resultBox = document.getElementById("sandbox_result");
+        if (sendBtn && resultBox) {
+            sendBtn.addEventListener("click", async () => {
+                const phone = (document.getElementById("sandbox_phone")?.value || "").trim();
+                const templateType = templateSelect?.value || "confirmation";
+                const customText = (document.getElementById("sandbox_custom_text")?.value || "").trim();
+
+                if (!phone) {
+                    alert("Please enter a phone number to test.");
+                    return;
+                }
+
+                sendBtn.disabled = true;
+                sendBtn.innerHTML = "<span>Sending WhatsApp message...</span>";
+                resultBox.classList.remove("hidden");
+                resultBox.className = "p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap leading-relaxed bg-gray-50 border-gray-200 text-gray-600";
+                resultBox.textContent = "Connecting to OpenWA API...";
+
+                try {
+                    const res = await fetch("/api/admin/whatsapp/test-send", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            phone,
+                            templateType: templateType === "custom" ? "" : templateType,
+                            message: templateType === "custom" ? customText : ""
+                        })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        resultBox.className = "p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap leading-relaxed bg-emerald-50 border-emerald-200 text-emerald-900";
+                        resultBox.textContent = `[SUCCESS] Message Delivered in ${data.latencyMs}ms!\n\nResolved Chat ID: ${data.resolvedChatId || 'Sent'}\n\nRendered Content:\n${data.renderedText}`;
+                    } else {
+                        resultBox.className = "p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap leading-relaxed bg-red-50 border-red-200 text-red-900";
+                        resultBox.textContent = `[FAILED] Error: ${data.error}`;
+                    }
+                } catch (e) {
+                    resultBox.className = "p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap leading-relaxed bg-red-50 border-red-200 text-red-900";
+                    resultBox.textContent = `[NETWORK ERROR] ${e.message}`;
+                } finally {
+                    sendBtn.disabled = false;
+                    sendBtn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg><span>Send Test WhatsApp Message</span>`;
+                }
+            });
+        }
+
+        // Live Ping Status Check
+        const pingBtn = document.getElementById("ping_session_btn");
+        const statusBox = document.getElementById("session_status_box");
+        if (pingBtn && statusBox) {
+            pingBtn.addEventListener("click", async () => {
+                pingBtn.disabled = true;
+                pingBtn.textContent = "Checking...";
+                statusBox.classList.remove("hidden");
+                statusBox.className = "p-3.5 rounded-xl border text-xs font-mono bg-gray-50 border-gray-200 text-gray-700";
+                statusBox.textContent = "Pinging OpenWA session endpoint...";
+
+                try {
+                    const res = await fetch("/api/admin/whatsapp/status");
+                    const data = await res.json();
+                    if (data.success) {
+                        statusBox.className = "p-3.5 rounded-xl border text-xs font-mono bg-emerald-50 border-emerald-200 text-emerald-900";
+                        statusBox.textContent = `[CONNECTED] Status: ${data.status} | Engine: ${data.engine} | Number: ${data.user?.id || 'Active'}`;
+                    } else {
+                        statusBox.className = "p-3.5 rounded-xl border text-xs font-mono bg-red-50 border-red-200 text-red-900";
+                        statusBox.textContent = `[OFFLINE / ERROR] Status: ${data.status} | Reason: ${data.error}`;
+                    }
+                } catch (err) {
+                    statusBox.className = "p-3.5 rounded-xl border text-xs font-mono bg-red-50 border-red-200 text-red-900";
+                    statusBox.textContent = `[UNREACHABLE] ${err.message}`;
+                } finally {
+                    pingBtn.disabled = false;
+                    pingBtn.innerHTML = `<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg><span>Check Live Status</span>`;
+                }
+            });
+        }
+    </script>
+</AdminLayout>

@@ -1,0 +1,31 @@
+---
+interface Props {
+    title: string;
+    description: string;
+    url: string;
+    datePublished?: string;
+    dateModified?: string;
+}
+
+const { title, description, url, datePublished, dateModified } = Astro.props;
+
+const webPageSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    name: title,
+    description: description,
+    url: url,
+    ...(datePublished && { datePublished }),
+    ...(dateModified && { dateModified }),
+    publisher: {
+        "@type": "Organization",
+        name: "Dior Sauvage Pakistan",
+        logo: {
+            "@type": "ImageObject",
+            url: "https://sauvagedior.pk/logo.png",
+        },
+    },
+};
+---
+
+<script type="application/ld+json" set:html={JSON.stringify(webPageSchema)} />

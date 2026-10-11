@@ -1,0 +1,373 @@
+---
+import MainLayout from "../../layouts/MainLayout.astro";
+import Icon from "../../components/ui/Icon.astro";
+import { getCourierTrackingUrl, getCourierProviderName, getCourierProviderInfo, getTrackingHistory } from "../../utils/courier";
+import { getAllSettings } from "../../utils/settings";
+
+const { id } = Astro.params;
+const db = Astro.locals.runtime?.env?.DB;
+
+let order: any = null;
+let orderItems: any[] = [];
+let errorMsg = "";
+let trackingInfo: any = null;
+let courierInfo: any = null;
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing.";
+} else if (id) {
+    try {
+        let settings: any = null;
+        try {
+            settings = await getAllSettings(db);
+        } catch (sErr) {
+            console.warn("Failed to fetch settings for tracking page:", sErr);
+        }
+
+        // Strip leading hash if present in the URL parameter
+        const cleanId = id.replace(/^#+/, "").trim();
+        
+        // Fetch Order details (support lookup by Order ID or Courier Tracking Number)
+        order = await db.prepare(`SELECT * FROM orders WHERE id = ? OR tracking_no = ?`).bind(cleanId, cleanId).first();
+        
+        if (order) {
+            // Determine active courier partner info
+            courierInfo = getCourierProviderInfo(order.courier_provider, order.tracking_no, settings?.courier_default_provider);
+
+            // Fetch order items
+            const itemsResult = await db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).bind(order.id).all();
+            orderItems = itemsResult.results || [];
+            
+            // If order has tracking number, fetch real-time checkpoints from RS Courier
+            const trackNo = (order.tracking_no || "").trim();
+            if (trackNo && trackNo !== "null") {
+                try {
+                    const res = await getTrackingHistory(trackNo);
+                    if (res && res.success) {
+                        trackingInfo = res;
+                    }
+                } catch (tErr) {
+                    console.error("Tracking history fetch error:", tErr);
+                }
+            }
+        } else {
+            errorMsg = `We couldn't find an order with ID or Tracking Number #${id}.`;
+        }
+    } catch (e: any) {
+        errorMsg = "An error occurred while fetching order details.";
+        console.error("Tracking details error:", e);
+    }
+}
+
+function getStatusBadgeClass(status: string) {
+    switch (status) {
+        case "Pending":
+            return "bg-amber-50 text-amber-700 border-amber-200";
+        case "Confirmed":
+            return "bg-blue-50 text-blue-700 border-blue-200";
+        case "Booked":
+            return "bg-purple-50 text-purple-700 border-purple-200";
+        case "Shipped":
+            return "bg-indigo-50 text-indigo-700 border-indigo-200";
+        case "Delivered":
+            return "bg-emerald-50 text-emerald-700 border-emerald-200";
+        case "Returned":
+            return "bg-rose-50 text-rose-700 border-rose-200";
+        case "Cancelled":
+            return "bg-gray-50 text-gray-700 border-gray-200";
+        default:
+            return "bg-gray-50 text-gray-700 border-gray-200";
+    }
+}
+---
+
+<MainLayout 
+    title={order ? `Track Order #${order.id} - Dior Sauvage Pakistan` : "Order Tracking - Dior Sauvage Pakistan"} 
+    description={order ? `Live tracking timeline for Dior Sauvage Pakistan Order #${order.id}. Current Status: ${order.status}.` : "Live order tracking page."}
+>
+    <!-- Background Accents -->
+    <div class="absolute top-0 left-0 right-0 h-[400px] bg-gradient-to-b from-orange-50/50 to-transparent -z-10 pointer-events-none"></div>
+
+    <div class="max-w-5xl mx-auto px-4 py-12">
+        <!-- Back Navigation -->
+        <a href="/track-order/" class="inline-flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-brand-orange mb-8 transition-colors">
+            ← Back to Search
+        </a>
+
+        {/* Error / 404 State */}
+        {errorMsg && (
+            <div class="max-w-xl mx-auto bg-white p-8 rounded-2xl border border-gray-100 shadow-sm text-center space-y-6">
+                <div class="w-16 h-16 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                    <Icon name="alert-triangle" class="w-8 h-8 text-rose-500" />
+                </div>
+                <div class="space-y-2">
+                    <h1 class="text-2xl font-extrabold text-gray-900">Order Not Found</h1>
+                    <p class="text-sm text-gray-500 font-medium leading-relaxed">{errorMsg}</p>
+                </div>
+                <a 
+                    href="/track-order/" 
+                    class="inline-flex items-center justify-center px-6 py-3 bg-brand-orange hover:bg-brand-orange/95 text-white font-bold rounded-xl text-sm transition-colors shadow-sm"
+                >
+                    Search Another Order
+                </a>
+            </div>
+        )}
+
+        {/* Order Details Render */}
+        {order && (
+            <div class="space-y-8 animate-fadeIn">
+                <!-- Header Card -->
+                <div class="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                    <div>
+                        <div class="flex flex-wrap items-center gap-3">
+                            <h1 class="text-3xl font-extrabold text-gray-900 tracking-tight">Order #{order.id}</h1>
+                            <span class={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold border ${getStatusBadgeClass(order.status)}`}>
+                                {order.status}
+                            </span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-2.5 flex items-center gap-1.5 font-bold uppercase tracking-wider">
+                            <Icon name="calendar" class="w-4 h-4 text-gray-300" /> 
+                            Placed on {new Date(order.created_at).toLocaleString('en-US', {
+                                timeZone: 'Asia/Karachi',
+                                day: '2-digit',
+                                month: 'long',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                            })}
+                        </p>
+                    </div>
+
+                </div>
+
+                <!-- Main Grid Layout -->
+                <div class="grid md:grid-cols-3 gap-8 items-start">
+                    <!-- Left Columns: Timeline Progress (col span 2) -->
+                    <div class="md:col-span-2 space-y-6">
+                        <!-- Live Tracking Card -->
+                        <div class="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-sm space-y-6">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-brand-orange shrink-0">
+                                        <Icon name="truck" class="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h2 class="text-lg font-extrabold text-gray-900">Live Tracking Status</h2>
+                                        <p class="text-xs text-gray-500 font-medium">Real-time checkpoint updates from courier partner</p>
+                                    </div>
+                                </div>
+                                <span class={`inline-flex items-center px-3.5 py-1.5 rounded-full text-xs font-bold border self-start sm:self-auto shadow-xs ${getStatusBadgeClass(order.status)}`}>
+                                    {order.status}
+                                </span>
+                            </div>
+
+                            {/* Courier Meta Info (Tracking Number, Partner, Destination) */}
+                            {order.tracking_no && order.tracking_no !== "null" && order.tracking_no !== "" && (
+                                <div class="bg-gradient-to-br from-orange-50/70 to-amber-50/40 border border-orange-100/80 rounded-xl p-4 md:p-5">
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs items-center">
+                                        <div>
+                                            <span class="text-[10px] font-bold uppercase tracking-wider text-orange-800/80 block">Tracking Number</span>
+                                            <span class="font-mono font-bold text-gray-900 text-sm mt-0.5 block">{order.tracking_no}</span>
+                                        </div>
+                                        <div>
+                                            <span class="text-[10px] font-bold uppercase tracking-wider text-orange-800/80 block mb-1">Courier Partner</span>
+                                            <div class="flex items-center gap-2 mt-0.5">
+                                                {courierInfo?.logo && (
+                                                    <div class="w-7 h-7 rounded-md bg-white border border-orange-200/60 p-1 flex items-center justify-center shrink-0 shadow-2xs">
+                                                        <img src={courierInfo.logo} alt={courierInfo.name} class="max-w-full max-h-full object-contain" />
+                                                    </div>
+                                                )}
+                                                <span class="font-bold text-gray-900 text-sm">{courierInfo?.name || "PostEx"}</span>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <span class="text-[10px] font-bold uppercase tracking-wider text-orange-800/80 block">Destination</span>
+                                            <span class="font-bold text-gray-900 text-sm mt-0.5 block">{trackingInfo?.destination || order.city}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Real-time Checkpoints Timeline */}
+                            {trackingInfo && trackingInfo.data && trackingInfo.data.length > 0 ? (
+                                <div class="space-y-4 pt-2">
+                                    <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                                        <Icon name="clock" class="w-3.5 h-3.5" />
+                                        Tracking History ({trackingInfo.data.length} Checkpoints)
+                                    </h3>
+                                    
+                                    <div class="relative pl-6 space-y-5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200">
+                                        {trackingInfo.data.map((checkpoint: any, index: number) => {
+                                            const isLatest = index === trackingInfo.data.length - 1;
+                                            const isDelivered = checkpoint.status?.toLowerCase().includes("delivered");
+                                            
+                                            return (
+                                                <div class="relative flex items-start gap-4">
+                                                    <div class={`absolute -left-6 top-1 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                                        isDelivered
+                                                            ? "bg-emerald-500 border-emerald-200 text-white"
+                                                            : isLatest
+                                                            ? "bg-brand-orange border-orange-200 text-white"
+                                                            : "bg-white border-gray-300 text-gray-400"
+                                                    }`}>
+                                                        <span class="w-1.5 h-1.5 rounded-full bg-white"></span>
+                                                    </div>
+                                                    
+                                                    <div class="flex-1 min-w-0">
+                                                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                                            <p class={`text-sm font-bold ${isLatest ? "text-gray-950" : "text-gray-700"}`}>
+                                                                {checkpoint.status}
+                                                            </p>
+                                                            {checkpoint.created && (
+                                                                <span class="text-xs font-semibold text-gray-400 font-mono shrink-0">
+                                                                    {checkpoint.created}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {isLatest && (
+                                                            <span class="inline-block mt-1 text-[10px] font-bold text-brand-orange bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full">
+                                                                Latest Checkpoint
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ) : order.tracking_no && order.tracking_no !== "null" && order.tracking_no !== "" ? (
+                                <div class="text-center py-6 px-4 bg-gray-50 rounded-xl border border-gray-100">
+                                    <Icon name="clock" class="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                                    <p class="text-sm font-bold text-gray-800">Shipment Booked & Awaiting Dispatch</p>
+                                    <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                                        Your tracking number is generated. Checkpoint updates will appear here once picked by the courier rider.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div class="text-center py-6 px-4 bg-gray-50 rounded-xl border border-gray-100">
+                                    <Icon name="package" class="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                                    <p class="text-sm font-bold text-gray-800">Preparing Shipment</p>
+                                    <p class="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                                        Your order is currently being prepared at our warehouse. A courier tracking number will be assigned once booked.
+                                    </p>
+                                </div>
+                            )}
+
+
+                        </div>
+
+                        <!-- Item Summary Box -->
+                        <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                            <div class="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/30">
+                                <h3 class="font-extrabold text-gray-900 flex items-center gap-2 text-base">
+                                    <Icon name="shopping-cart" class="w-5 h-5 text-brand-orange" />
+                                    Order Items Summary
+                                </h3>
+                                <span class="text-[10px] font-bold bg-orange-100 text-brand-orange px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                    {orderItems.reduce((sum, item) => sum + item.quantity, 0)} Items
+                                </span>
+                            </div>
+                            <div class="divide-y divide-gray-100">
+                                {orderItems.map((item) => (
+                                    <div class="p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                        <div>
+                                            <h4 class="font-bold text-gray-950 text-sm leading-snug">{item.product_name}</h4>
+                                            <div class="flex items-center gap-2 mt-1.5 text-xs font-semibold text-gray-500">
+                                                <span>PKR {item.unit_price.toLocaleString()}</span>
+                                                <span>•</span>
+                                                <span class="text-brand-orange">{item.pack_size_label}</span>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between w-full sm:w-auto sm:gap-10 border-t sm:border-t-0 pt-3 sm:pt-0">
+                                            <div class="text-left sm:text-right">
+                                                <span class="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Quantity</span>
+                                                <span class="font-bold text-gray-800 text-sm mt-0.5 block">{item.quantity} Pack(s)</span>
+                                            </div>
+                                            <div class="text-right">
+                                                <span class="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Subtotal</span>
+                                                <span class="font-bold text-gray-900 text-sm mt-0.5 block">PKR {(item.unit_price * item.quantity).toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <!-- Totals Panel -->
+                            <div class="bg-gray-50/50 p-6 border-t border-gray-100 text-sm font-semibold text-gray-600 space-y-3.5">
+                                <div class="flex justify-between">
+                                    <span>Subtotal</span>
+                                    <span class="text-gray-900 font-bold">PKR {(order.total_amount - order.delivery_fee).toLocaleString()}</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>Shipping & Handling</span>
+                                    <span class={order.delivery_fee === 0 ? "text-green-600 font-bold" : "text-gray-900 font-bold"}>
+                                        {order.delivery_fee === 0 ? "FREE" : `PKR ${order.delivery_fee}`}
+                                    </span>
+                                </div>
+                                <div class="flex justify-between text-base font-extrabold text-gray-950 pt-3.5 border-t border-gray-200">
+                                    <span>Grand Total (COD)</span>
+                                    <span class="text-brand-orange text-lg">PKR {order.total_amount.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Delivery Information -->
+                    <div class="space-y-6">
+                        <!-- Customer Address Card -->
+                        <div class="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm space-y-6">
+                            <h3 class="font-extrabold text-gray-900 text-sm flex items-center gap-2 border-b border-gray-100 pb-3 uppercase tracking-wider text-xs text-gray-500">
+                                <Icon name="user" class="w-4 h-4 text-brand-orange" />
+                                Delivery Information
+                            </h3>
+                            <div class="space-y-4 text-xs font-semibold">
+                                <div>
+                                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Recipient Name</span>
+                                    <span class="font-bold text-gray-900 text-sm block mt-1">{order.customer_name}</span>
+                                </div>
+                                <div>
+                                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Contact Phone</span>
+                                    <span class="font-bold text-gray-900 text-sm block mt-1">{order.customer_phone}</span>
+                                </div>
+                                {order.customer_email && (
+                                    <div>
+                                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Email Address</span>
+                                        <span class="font-bold text-gray-900 text-sm block mt-1">{order.customer_email}</span>
+                                    </div>
+                                )}
+                                <div class="border-t border-gray-100 pt-4">
+                                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Shipping Address</span>
+                                    <div class="mt-2 text-gray-650 bg-gray-50/70 p-3.5 rounded-xl border border-gray-200 leading-relaxed font-normal text-xs">
+                                        {order.address}<br />
+                                        <span class="text-gray-900 font-semibold block mt-1.5 flex items-center gap-1.5">
+                                            <Icon name="truck" class="w-4 h-4 text-brand-orange" /> 
+                                            {order.city}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- FAQ Info Box -->
+                        <div class="bg-gray-50/80 p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                            <h4 class="font-bold text-gray-900 text-sm flex items-center gap-2">
+                                <Icon name="shield" class="w-4 h-4 text-brand-orange" /> Delivery Information FAQ
+                            </h4>
+                            <div class="space-y-3.5 text-xs text-gray-600 leading-relaxed font-normal">
+                                <div>
+                                    <p class="text-gray-900 font-semibold mb-0.5">How long does shipping take?</p>
+                                    <p>Standard delivery to major cities (Karachi, Lahore, Islamabad, etc.) takes 2-3 working days. Other regions take 3-5 days.</p>
+                                </div>
+                                <div class="pt-3 border-t border-gray-200">
+                                    <p class="text-gray-900 font-semibold mb-0.5">What is Cash on Delivery?</p>
+                                    <p>You only pay the rider in cash once your parcel is physically handed over to you at your doorstep.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+    </div>
+</MainLayout>

@@ -1,0 +1,814 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import Button from "../components/ui/Button.astro";
+import Icon from "../components/ui/Icon.astro";
+import { getAllSettings } from "../utils/settings";
+import { getCachedCourierCities } from "../utils/courier";
+
+const seoTitle = "Checkout - Dior Sauvage Pakistan";
+const seoDescription =
+    "Secure checkout for Christian Dior Sauvage 100ml. Pay via Cash on Delivery with Open Parcel Checking Warranty.";
+
+const runtimeEnv = Astro.locals.runtime?.env;
+const siteKey =
+    runtimeEnv?.SITE_KEY ||
+    runtimeEnv?.PUBLIC_TURNSTILE_SITE_KEY ||
+    import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ||
+    import.meta.env.SITE_KEY;
+
+const db = runtimeEnv?.DB;
+let deliveryCharges = 200;
+let freeShippingThreshold = 2000;
+let cities: string[] = [];
+
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        deliveryCharges = settings.delivery_charges;
+        freeShippingThreshold = settings.free_shipping_threshold;
+        cities = await getCachedCourierCities(db, false);
+    } catch (e) {
+        console.error("Failed to load settings on checkout page", e);
+    }
+}
+---
+
+<MainLayout title={seoTitle} description={seoDescription}>
+    <!-- Meta Pixel InitiateCheckout Event -->
+    <script is:inline>
+        if (typeof window !== 'undefined' && window.fbq) {
+            window.fbq('track', 'InitiateCheckout');
+        }
+    </script>
+    <div class="bg-gray-50 py-12 min-h-[70vh]">
+        <div class="container mx-auto px-4 max-w-6xl">
+            <h1 class="text-3xl font-bold text-gray-900 mb-8">Checkout</h1>
+
+            <div class="grid lg:grid-cols-3 gap-8 items-start">
+                {/* Left Column - Shipping & Payment */}
+                <div class="lg:col-span-2 space-y-8">
+                    {/* Shipping Details */}
+                    <div
+                        class="bg-white p-6 rounded-xl shadow-sm border border-gray-100"
+                    >
+                        <h2
+                            class="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"
+                        >
+                            <Icon
+                                name="user"
+                                class="w-5 h-5 text-brand-orange"
+                            />
+                            Shipping Details
+                        </h2>
+                        <form id="checkout-form" class="space-y-4">
+                            <div class="grid md:grid-cols-2 gap-4">
+                                <div>
+                                    <label
+                                        class="block text-sm font-medium text-gray-700 mb-1"
+                                        >Full Name</label
+                                    >
+                                    <input
+                                        type="text"
+                                        id="fullName"
+                                        name="fullName"
+                                        required
+                                        class="w-full rounded-lg border border-gray-300 bg-white text-gray-900 p-3 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                        placeholder="Enter your name"
+                                    />
+                                </div>
+                                <div>
+                                    <label
+                                        class="block text-sm font-medium text-gray-700 mb-1"
+                                        >Phone Number</label
+                                    >
+                                    <input
+                                        type="tel"
+                                        id="phone"
+                                        name="phone"
+                                        required
+                                        pattern="03[0-9]{9}"
+                                        maxlength="11"
+                                        class="w-full rounded-lg border border-gray-300 bg-white text-gray-900 p-3 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                        placeholder="03XXXXXXXXX"
+                                        oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 11)"
+                                    />
+                                    <p class="text-xs text-brand-orange mt-1">
+                                        We will contact you for confirmation via
+                                        WhatsApp or Call on this number.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="grid md:grid-cols-2 gap-4">
+                                <div>
+                                    <label
+                                        class="block text-sm font-medium text-gray-700 mb-1"
+                                        >Email (Optional)</label
+                                    >
+                                    <input
+                                        type="email"
+                                        id="email"
+                                        name="email"
+                                        class="w-full rounded-lg border border-gray-300 bg-white text-gray-900 p-3 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                        placeholder="email@example.com"
+                                    />
+                                </div>
+                                <div class="relative" id="city-dropdown-container">
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                        City <span class="text-red-500">*</span>
+                                    </label>
+                                    <!-- Hidden input for standard form submission & validation -->
+                                    <input
+                                        type="hidden"
+                                        id="city"
+                                        name="city"
+                                        required
+                                    />
+
+                                    <!-- Main selector button -->
+                                    <button
+                                        type="button"
+                                        id="city-selector-btn"
+                                        class="w-full text-left rounded-lg border border-gray-300 bg-white p-3 pr-10 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow relative cursor-pointer"
+                                    >
+                                        <span id="city-display" class="block truncate text-gray-500">Select your city...</span>
+                                        <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                        </div>
+                                    </button>
+                                    
+                                    <!-- Custom Dropdown Menu -->
+                                    <div
+                                        id="city-dropdown-menu"
+                                        class="absolute z-50 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-xl hidden overflow-hidden flex-col"
+                                    >
+                                        <!-- Search Input -->
+                                        <div class="p-2 border-b border-gray-100 bg-gray-50">
+                                            <input
+                                                type="text"
+                                                id="city-search"
+                                                autocomplete="off"
+                                                class="w-full rounded-md border border-gray-300 bg-white p-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-brand-orange focus:border-brand-orange"
+                                                placeholder="Search city (e.g. Lahore, Karachi, Sargodha)..."
+                                            />
+                                        </div>
+                                        <!-- Scrollable List -->
+                                        <ul id="city-list" class="max-h-60 overflow-y-auto">
+                                            {cities.filter((city: string) => city && city !== "#N/A").map((city: string) => (
+                                                <li class="px-4 py-2.5 hover:bg-orange-50 cursor-pointer text-gray-700 text-sm border-b border-gray-50 last:border-b-0 city-option">{city}</li>
+                                            ))}
+                                            <li id="city-no-results" class="px-4 py-3 text-sm text-gray-500 text-center hidden">No cities found</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Structured Address Fields (Prevents Incomplete Delivery Failures) -->
+                            <div class="space-y-3">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-900 mb-0.5">
+                                        Shipping Address
+                                    </label>
+                                    <p class="text-xs text-gray-500">
+                                        Fill your exact address details for fast & hassle-free delivery to your doorstep.
+                                    </p>
+                                </div>
+
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <!-- 1. House / Flat No. -->
+                                    <div>
+                                        <label for="addr-house" class="block text-xs font-medium text-gray-700 mb-1">
+                                            House / Flat / Shop # <span class="text-brand-orange font-bold">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="addr-house"
+                                            required
+                                            class="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                            placeholder="e.g. House # 14-B / Flat 3"
+                                        />
+                                    </div>
+
+                                    <!-- 2. Street / Block No. -->
+                                    <div>
+                                        <label for="addr-street" class="block text-xs font-medium text-gray-700 mb-1">
+                                            Street / Block / Road <span class="text-brand-orange font-bold">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="addr-street"
+                                            required
+                                            class="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                            placeholder="e.g. Street 4, Block C"
+                                        />
+                                    </div>
+
+                                    <!-- 3. Area / Colony / Town -->
+                                    <div>
+                                        <label for="addr-area" class="block text-xs font-medium text-gray-700 mb-1">
+                                            Area / Colony / Town <span class="text-brand-orange font-bold">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="addr-area"
+                                            required
+                                            class="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                            placeholder="e.g. Johar Town / Model Town"
+                                        />
+                                    </div>
+
+                                    <!-- 4. Nearby Famous Place (Optional) -->
+                                    <div>
+                                        <label for="addr-nearby" class="block text-xs font-medium text-gray-700 mb-1">
+                                            Nearby Place / Landmark
+                                        </label>
+                                        <input
+                                            type="text"
+                                            id="addr-nearby"
+                                            class="w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange transition-shadow"
+                                            placeholder="e.g. Near Bilal Masjid / PSO Pump"
+                                        />
+                                    </div>
+                                </div>
+
+                                <!-- Auto-Generated Compiled Address (Visible & Non-editable / Read-only) -->
+                                <div class="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-3">
+                                    <div class="flex items-center justify-between mb-1.5">
+                                        <span class="text-[11px] font-bold text-gray-600 uppercase tracking-wider flex items-center gap-1.5">
+                                            <Icon name="truck" class="w-3.5 h-3.5 text-brand-orange" />
+                                            <span>Compiled Address (Courier Rider View)</span>
+                                        </span>
+                                        <span class="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                                            <Icon name="check-circle" class="w-3 h-3 text-emerald-500" />
+                                            <span>Auto-Generated</span>
+                                        </span>
+                                    </div>
+                                    <textarea
+                                        id="address"
+                                        name="address"
+                                        required
+                                        readonly
+                                        rows="2"
+                                        tabindex="-1"
+                                        class="w-full rounded-md border border-gray-200 bg-white text-gray-800 p-2 text-xs font-mono select-all focus:outline-none cursor-default"
+                                        placeholder="Address compiles automatically as you type above..."
+                                    ></textarea>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+
+                    {/* Payment Method */}
+                    <div
+                        class="bg-white p-6 rounded-xl shadow-sm border border-gray-100"
+                    >
+                        <h2
+                            class="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2"
+                        >
+                            <Icon
+                                name="credit-card"
+                                class="w-5 h-5 text-brand-orange"
+                            />
+                            Payment Method
+                        </h2>
+                        <div class="space-y-3">
+                            {/* COD */}
+                            <label
+                                class="flex items-center justify-between p-4 border border-brand-orange bg-orange-50 rounded-lg cursor-pointer"
+                            >
+                                <div class="flex items-center gap-3">
+                                    <input
+                                        type="radio"
+                                        name="payment"
+                                        value="cod"
+                                        checked
+                                        class="text-brand-orange focus:ring-brand-orange"
+                                    />
+                                    <div>
+                                        <span
+                                            class="block font-medium text-gray-900"
+                                            >Cash on Delivery</span
+                                        >
+                                        <span class="text-xs text-gray-500"
+                                            >Pay when you receive the parcel</span
+                                        >
+                                    </div>
+                                </div>
+                                <Icon
+                                    name="truck"
+                                    class="w-5 h-5 text-gray-400"
+                                />
+                            </label>
+
+                            {/* Card - Disabled */}
+                            <label
+                                class="flex items-center justify-between p-4 border border-gray-200 rounded-lg opacity-60 cursor-not-allowed"
+                            >
+                                <div class="flex items-center gap-3">
+                                    <input
+                                        type="radio"
+                                        name="payment"
+                                        disabled
+                                        class="text-gray-300"
+                                    />
+                                    <div>
+                                        <span
+                                            class="block font-medium text-gray-900"
+                                            >Credit / Debit Card</span
+                                        >
+                                        <span
+                                            class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded ml-2 uppercase font-bold tracking-wider"
+                                            >Coming Soon</span
+                                        >
+                                    </div>
+                                </div>
+                                <Icon
+                                    name="credit-card"
+                                    class="w-5 h-5 text-gray-400"
+                                />
+                            </label>
+
+                            {/* EasyPaisa - Disabled */}
+                            <label
+                                class="flex items-center justify-between p-4 border border-gray-200 rounded-lg opacity-60 cursor-not-allowed"
+                            >
+                                <div class="flex items-center gap-3">
+                                    <input
+                                        type="radio"
+                                        name="payment"
+                                        disabled
+                                        class="text-gray-300"
+                                    />
+                                    <div>
+                                        <span
+                                            class="block font-medium text-gray-900"
+                                            >EasyPaisa / JazzCash</span
+                                        >
+                                        <span
+                                            class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded ml-2 uppercase font-bold tracking-wider"
+                                            >Coming Soon</span
+                                        >
+                                    </div>
+                                </div>
+                                <Icon
+                                    name="smartphone"
+                                    class="w-5 h-5 text-gray-400"
+                                />
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Right Column - Order Summary */}
+                <div class="lg:col-span-1">
+                    <div
+                        class="bg-white p-6 rounded-xl shadow-sm border border-gray-100 sticky top-24"
+                    >
+                        <h2 class="text-xl font-bold text-gray-900 mb-6">
+                            Order Summary
+                        </h2>
+
+                        <div
+                            id="checkout-items"
+                            class="space-y-4 mb-6 max-h-60 overflow-y-auto pr-2"
+                        >
+                            {/* Items injected via JS */}
+                            <p class="text-gray-500 text-center py-4">
+                                Loading cart...
+                            </p>
+                        </div>
+
+                        <div
+                            class="space-y-3 pt-6 border-t border-gray-100 text-sm"
+                        >
+                            <div class="flex justify-between text-gray-600">
+                                <span>Subtotal</span>
+                                <span id="summary-subtotal">PKR 0</span>
+                            </div>
+                            <div class="flex justify-between text-gray-600">
+                                <span>Delivery Charges</span>
+                                <span
+                                    id="summary-delivery"
+                                    class="font-medium text-green-600"
+                                    >FREE</span
+                                >
+                            </div>
+                            <div
+                                class="flex justify-between text-lg font-bold text-gray-900 pt-3 border-t border-gray-100"
+                            >
+                                <span>Total</span>
+                                <span id="summary-total">PKR 0</span>
+                            </div>
+                        </div>
+
+                        <!-- <div
+                            class="cf-turnstile my-4"
+                            data-sitekey={siteKey}
+                            data-response-field-name="turnstileToken"
+                        >
+                        </div> -->
+                        <script
+                            is:inline
+                            define:vars={{
+                                key: siteKey,
+                                defaultDeliveryCharges: deliveryCharges,
+                                threshold: freeShippingThreshold,
+                            }}
+                        >
+                            if (!key) {
+                                console.error("Turnstile Site Key is missing!");
+                                const el =
+                                    document.querySelector(".cf-turnstile");
+                                if (el)
+                                    el.innerHTML =
+                                        '<p class="text-red-500 text-sm">Error: Captcha Configuration Missing (SITE_KEY)</p>';
+                            }
+                            window.storeDeliveryCharges = defaultDeliveryCharges;
+                            window.storeFreeShippingThreshold = threshold;
+                        </script>
+                        <button
+                            id="place-order-btn"
+                            class="w-full mt-8 bg-brand-orange text-white h-12 rounded-lg font-bold hover:bg-brand-orange/90 transition-colors flex items-center justify-center gap-2"
+                        >
+                            <span>Place Order</span>
+                            <Icon name="arrow-right" class="w-4 h-4" />
+                        </button>
+
+                        <p class="text-xs text-gray-500 text-center mt-4">
+                            By placing an order, you agree to our <a
+                                href="/terms/"
+                                class="text-brand-orange hover:underline"
+                                >Terms of Service</a
+                            >.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Meta Pixel InitiateCheckout Event -->
+    <script is:inline>
+        if (typeof window !== 'undefined' && window.fbq) {
+            window.fbq('track', 'InitiateCheckout');
+        }
+    </script>
+</MainLayout>
+
+<script>
+    import { actions } from "astro:actions";
+    import {
+        cartItems,
+        clearCart,
+        isCartOpen,
+        updateQuantity,
+        removeFromCart,
+    } from "../stores/cart";
+
+    // Close the cart sidebar when on checkout page
+    isCartOpen.set(false);
+
+    // Custom Searchable Dropdown Logic for City
+    const cityInput = document.getElementById('city') as HTMLInputElement;
+    const citySelectorBtn = document.getElementById('city-selector-btn');
+    const cityDisplay = document.getElementById('city-display');
+    const cityDropdownMenu = document.getElementById('city-dropdown-menu');
+    const citySearch = document.getElementById('city-search') as HTMLInputElement;
+    const cityOptions = document.querySelectorAll<HTMLElement>('.city-option');
+    const cityNoResults = document.getElementById('city-no-results');
+
+    // Toggle dropdown
+    citySelectorBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isHidden = cityDropdownMenu?.classList.contains('hidden');
+        if (isHidden) {
+            cityDropdownMenu?.classList.remove('hidden');
+            cityDropdownMenu?.classList.add('flex');
+            citySearch?.focus();
+        } else {
+            cityDropdownMenu?.classList.add('hidden');
+            cityDropdownMenu?.classList.remove('flex');
+        }
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (citySelectorBtn && cityDropdownMenu && !citySelectorBtn.contains(e.target as Node) && !cityDropdownMenu.contains(e.target as Node)) {
+            cityDropdownMenu.classList.add('hidden');
+            cityDropdownMenu.classList.remove('flex');
+        }
+    });
+
+    // Stop propagation on menu click so it doesn't close immediately
+    cityDropdownMenu?.addEventListener('click', (e) => {
+        e.stopPropagation();
+    });
+
+    // Filter cities on input in the search field
+    citySearch?.addEventListener('input', () => {
+        if (!citySearch) return;
+        const val = citySearch.value.toLowerCase().trim();
+        let hasVisible = false;
+        
+        cityOptions.forEach(opt => {
+            const text = (opt.textContent || '').toLowerCase();
+            if (text.includes(val)) {
+                opt.style.display = 'block';
+                hasVisible = true;
+            } else {
+                opt.style.display = 'none';
+            }
+        });
+        
+        if (cityNoResults) {
+            cityNoResults.style.display = hasVisible ? 'none' : 'block';
+        }
+    });
+
+    // Select city on click
+    cityOptions.forEach(opt => {
+        opt.addEventListener('click', (e) => {
+            e.preventDefault();
+            const selectedText = opt.textContent?.trim() || '';
+            
+            // Set hidden input value for form submission
+            if (cityInput) {
+                cityInput.value = selectedText;
+                cityInput.dispatchEvent(new Event('input', { bubbles: true }));
+                cityInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            
+            // Update UI display
+            if (cityDisplay) {
+                cityDisplay.textContent = selectedText;
+                cityDisplay.classList.remove('text-gray-500');
+                cityDisplay.classList.add('text-gray-900', 'font-medium');
+            }
+            
+            // Hide dropdown
+            cityDropdownMenu?.classList.add('hidden');
+            cityDropdownMenu?.classList.remove('flex');
+            
+            // Reset search
+            if (citySearch) {
+                citySearch.value = '';
+                citySearch.dispatchEvent(new Event('input'));
+            }
+        });
+    });
+
+    const houseInput = document.getElementById("addr-house") as HTMLInputElement | null;
+    const streetInput = document.getElementById("addr-street") as HTMLInputElement | null;
+    const areaInput = document.getElementById("addr-area") as HTMLInputElement | null;
+    const nearbyInput = document.getElementById("addr-nearby") as HTMLInputElement | null;
+    const addressTextarea = document.getElementById("address") as HTMLTextAreaElement | null;
+
+    function updateCompiledAddress() {
+        if (!addressTextarea) return;
+        const house = houseInput?.value?.trim() || "";
+        const street = streetInput?.value?.trim() || "";
+        const area = areaInput?.value?.trim() || "";
+        const nearby = nearbyInput?.value?.trim() || "";
+
+        const parts: string[] = [];
+        if (house) parts.push(house);
+        if (street) parts.push(street);
+        if (area) parts.push(area);
+        
+        let compiled = parts.join(", ");
+        if (nearby) {
+            compiled += compiled ? ` (Near: ${nearby})` : `Near: ${nearby}`;
+        }
+
+        addressTextarea.value = compiled;
+    }
+
+    [houseInput, streetInput, areaInput, nearbyInput].forEach(input => {
+        input?.addEventListener("input", updateCompiledAddress);
+        input?.addEventListener("blur", updateCompiledAddress);
+    });
+
+    const itemsContainer = document.getElementById("checkout-items");
+    const subtotalEl = document.getElementById("summary-subtotal");
+    const totalEl = document.getElementById("summary-total");
+    const deliveryEl = document.getElementById("summary-delivery");
+    const form = document.getElementById("checkout-form") as HTMLFormElement;
+    const placeOrderBtn = document.getElementById("place-order-btn");
+
+    let currentTotal = 0;
+
+    // Render Cart Items
+    cartItems.subscribe((items) => {
+        if (itemsContainer) itemsContainer.innerHTML = "";
+
+        if (items.length === 0) {
+            if (itemsContainer)
+                itemsContainer.innerHTML =
+                    '<p class="text-gray-500 text-center py-4">Your cart is empty.</p>';
+            currentTotal = 0;
+            updateTotals(0);
+            if (placeOrderBtn)
+                (placeOrderBtn as HTMLButtonElement).disabled = true;
+            return;
+        }
+
+        if (placeOrderBtn)
+            (placeOrderBtn as HTMLButtonElement).disabled = false;
+
+        items.forEach((item) => {
+            const itemEl = document.createElement("div");
+            itemEl.className = "flex gap-3 bg-gray-50 p-2 rounded-lg";
+            itemEl.innerHTML = `
+        <div class="w-16 h-16 bg-white rounded-md overflow-hidden flex-shrink-0 border border-gray-200">
+            <img src="${item.image}" width="80" height="80" alt="${item.name}" class="w-full h-full object-cover">
+        </div>
+        <div class="flex-1">
+            <div class="flex justify-between items-start">
+                <h4 class="text-sm font-medium text-gray-900 line-clamp-2 pr-2">${item.name}</h4>
+                <button class="text-red-500 hover:text-red-700 p-1 remove-item-btn" data-id="${item.id}" aria-label="Remove item">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+            
+            <div class="flex justify-between items-end mt-2">
+                <div class="flex items-center gap-2 border border-gray-200 rounded-md bg-white px-2 py-0.5">
+                    <button class="text-gray-500 hover:text-brand-orange px-1 decrease-qty-btn" data-id="${item.id}">-</button>
+                    <span class="text-xs font-medium text-gray-900 w-4 text-center">${item.quantity}</span>
+                    <button class="text-gray-500 hover:text-brand-orange px-1 increase-qty-btn" data-id="${item.id}">+</button>
+                </div>
+                <span class="text-sm font-bold text-gray-900">PKR ${(item.price * item.quantity).toLocaleString()}</span>
+            </div>
+        </div>
+      `;
+            itemsContainer?.appendChild(itemEl);
+        });
+
+        // Add event listeners for new buttons
+        document.querySelectorAll(".increase-qty-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                const id = (e.currentTarget as HTMLElement).dataset.id!;
+                const item = items.find((i) => i.id === id);
+                if (item) updateQuantity(id, item.quantity + 1);
+            });
+        });
+
+        document.querySelectorAll(".decrease-qty-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                const id = (e.currentTarget as HTMLElement).dataset.id!;
+                const item = items.find((i) => i.id === id);
+                if (item) updateQuantity(id, item.quantity - 1);
+            });
+        });
+
+        document.querySelectorAll(".remove-item-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                const id = (e.currentTarget as HTMLElement).dataset.id!;
+                removeFromCart(id);
+            });
+        });
+
+        currentTotal = items.reduce(
+            (sum, item) => sum + item.price * item.quantity,
+            0,
+        );
+
+        // Calculate Total Quantity for Delivery Fee Logic
+        // We need to count total UNITS, so we multiply item quantity by its pack size (default 1)
+        const totalUnits = items.reduce((sum, item) => {
+            const unitsPerItem = item.packSize || 1;
+            return sum + item.quantity * unitsPerItem;
+        }, 0);
+
+        const isBundleFreeShipping = totalUnits >= 5;
+        const isThresholdFreeShipping = window.storeFreeShippingThreshold > 0 && currentTotal >= window.storeFreeShippingThreshold;
+        
+        const deliveryFee = (isBundleFreeShipping || isThresholdFreeShipping) ? 0 : window.storeDeliveryCharges;
+
+        updateTotals(deliveryFee);
+    });
+
+    function updateTotals(deliveryFee: number) {
+        if (subtotalEl)
+            subtotalEl.textContent = `PKR ${currentTotal.toLocaleString()}`;
+
+        if (deliveryEl) {
+            if (deliveryFee === 0) {
+                deliveryEl.textContent = "FREE";
+                deliveryEl.className = "font-medium text-green-600";
+            } else {
+                deliveryEl.textContent = `PKR ${deliveryFee}`;
+                deliveryEl.className = "font-medium text-gray-900";
+            }
+        }
+
+        if (totalEl) {
+            const finalTotal = currentTotal + deliveryFee;
+            totalEl.textContent = `PKR ${finalTotal.toLocaleString()}`;
+        }
+    }
+
+    // Handle Order Submission
+    placeOrderBtn?.addEventListener("click", async () => {
+        if (form?.checkValidity()) {
+            const selectedCity = (document.getElementById("city") as HTMLInputElement)?.value?.trim();
+            if (!selectedCity) {
+                alert("Please select your city from the dropdown list.");
+                const selectorBtn = document.getElementById("city-selector-btn");
+                selectorBtn?.focus();
+                selectorBtn?.scrollIntoView({ behavior: "smooth", block: "center" });
+                return;
+            }
+
+            const btn = placeOrderBtn as HTMLButtonElement;
+            const originalContent = btn.innerHTML;
+
+            // Get current cart items
+            const items = cartItems.get();
+            if (items.length === 0) {
+                alert("Your cart is empty!");
+                return;
+            }
+
+            // Get customer details
+            const customer = {
+                name: (document.getElementById("fullName") as HTMLInputElement)
+                    .value,
+                phone: (document.getElementById("phone") as HTMLInputElement)
+                    .value,
+                email: (document.getElementById("email") as HTMLInputElement)
+                    .value,
+                city: (document.getElementById("city") as HTMLInputElement)
+                    .value,
+                address: (
+                    document.getElementById("address") as HTMLTextAreaElement
+                ).value,
+            };
+
+            // Calculate totals
+            const totalUnits = items.reduce((sum, item) => {
+                const unitsPerItem = item.packSize || 1;
+                return sum + item.quantity * unitsPerItem;
+            }, 0);
+            const isBundleFreeShipping = totalUnits >= 5;
+            const isThresholdFreeShipping = window.storeFreeShippingThreshold > 0 && currentTotal >= window.storeFreeShippingThreshold;
+            const deliveryFee = (isBundleFreeShipping || isThresholdFreeShipping) ? 0 : window.storeDeliveryCharges;
+            const finalTotal = currentTotal + deliveryFee;
+
+            // Get turnstile token
+            const turnstileInput = document.querySelector(
+                '[name="turnstileToken"]',
+            ) as HTMLInputElement;
+            const turnstileToken =
+                turnstileInput?.value || "disabled_on_checkout";
+
+            /* if (!turnstileToken) {
+                alert("Please complete the captcha.");
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+                return;
+            } */
+
+            btn.disabled = true;
+            btn.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Processing...`;
+
+            try {
+                // @js-ignore
+                const { data, error } = await actions.order({
+                    customer,
+                    items,
+                    total: finalTotal,
+                    deliveryFee,
+                    turnstileToken,
+                });
+
+                if (error) {
+                    alert("Error placing order: " + error.message);
+                    btn.disabled = false;
+                    btn.innerHTML = originalContent;
+                } else {
+                    clearCart();
+                    // Pass order ID to success page
+                    window.location.href = `/order-success/?id=${data.orderId}`;
+                }
+            } catch (err) {
+                alert("Something went wrong. Please try again.");
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
+        } else {
+            form?.reportValidity();
+        }
+    });
+</script>
+
+<script is:inline>
+    // GA4 begin_checkout event
+    if (typeof window !== 'undefined') {
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({
+            event: "begin_checkout",
+            ecommerce: {
+                currency: "PKR"
+            }
+        });
+    }
+</script>

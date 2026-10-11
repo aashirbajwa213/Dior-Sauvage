@@ -1,0 +1,131 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import Button from "../components/ui/Button.astro";
+import Icon from "../components/ui/Icon.astro";
+import PageHeader from "../components/PageHeader.astro";
+import { getAllSettings } from "../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+let settings: any = {};
+if (db) {
+    try {
+        settings = await getAllSettings(db);
+    } catch (e) {}
+}
+const whatsappNumber = settings.public_whatsapp_number || "0311 2390620";
+let displayWhatsapp = whatsappNumber;
+if (displayWhatsapp.startsWith('92')) {
+    displayWhatsapp = '0' + displayWhatsapp.substring(2);
+    if (displayWhatsapp.length > 4) {
+        displayWhatsapp = displayWhatsapp.substring(0, 4) + ' ' + displayWhatsapp.substring(4);
+    }
+}
+
+const seoTitle =
+    "Dior Sauvage Support & Batch Verification | Customer Assistance";
+const seoDescription =
+    "Dior Sauvage fragrance customer support. How to verify batch codes, maximize longevity, report delivery issues, and care for your luxury perfume.";
+
+const fragranceCare = [
+    {
+        icon: "search",
+        title: "How to Verify Batch Codes",
+        steps: [
+            "Locate the 4-digit alphanumeric code stamped on the outer box bottom.",
+            "Confirm the exact same code is engraved on the glass base of your bottle.",
+            "Visit CheckFresh.com or Cosmetic.Momoko.hk.",
+            "Select brand 'Christian Dior' and enter your code to view the production date and batch validity.",
+        ],
+    },
+    {
+        icon: "star",
+        title: "Maximizing Longevity & Sillage",
+        steps: [
+            "Apply after showering onto well-hydrated skin (unscented lotion or petroleum jelly enhances hold).",
+            "Spray directly onto pulse points: neck sides, collarbone, and wrists.",
+            "Do NOT rub wrists together; rubbing crushes top notes and accelerates evaporation.",
+            "Spray 2-3 sprays on fabric (shirts or jackets) for 24+ hour performance.",
+        ],
+    },
+    {
+        icon: "shield",
+        title: "Checking Warranty & Arrival Claims",
+        steps: [
+            "Inspect parcel seals upon delivery with courier (TCS / Leopards).",
+            "Verify the packaging is pristine and authentic before payment.",
+            "If any transit damage or leakage occurred, photograph the parcel immediately.",
+            "Reach out to our WhatsApp hotline within 7 days for a hassle-free replacement.",
+        ],
+    },
+    {
+        icon: "check",
+        title: "Proper Perfume Storage",
+        steps: [
+            "Keep your bottle away from direct sunlight and window ledges.",
+            "Store in a cool, dark wardrobe or drawer (avoid bathroom humidity).",
+            "Always keep the magnetic cap securely snapped to prevent oxidation.",
+            "When stored correctly, Dior Sauvage retains full potency for 3-5+ years.",
+        ],
+    },
+];
+---
+
+<MainLayout title={seoTitle} description={seoDescription}>
+    <PageHeader
+        title="Fragrance Care & Support"
+        tagline="Expert guidance on verifying authenticity, maximizing scent longevity, and order support."
+    />
+
+    <div class="container mx-auto px-4 max-w-5xl py-16">
+        <div class="grid md:grid-cols-2 gap-8 mb-16">
+            {
+                fragranceCare.map((item) => (
+                    <div class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-10 h-10 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-bold">
+                                ✓
+                            </div>
+                            <h2 class="text-xl font-bold text-gray-900">
+                                {item.title}
+                            </h2>
+                        </div>
+                        <ol class="space-y-3">
+                            {item.steps.map((step, index) => (
+                                <li class="flex items-start gap-3 text-gray-600 text-sm">
+                                    <span class="font-bold text-[#02274F] shrink-0">
+                                        {index + 1}.
+                                    </span>
+                                    <span>{step}</span>
+                                </li>
+                            ))}
+                        </ol>
+                    </div>
+                ))
+            }
+        </div>
+
+        <div
+            class="bg-slate-950 text-white rounded-2xl p-8 lg:p-12 text-center relative overflow-hidden"
+        >
+            <h2 class="text-2xl sm:text-3xl font-bold mb-4">
+                Need Immediate Help with Your Order?
+            </h2>
+            <p class="text-slate-300 max-w-xl mx-auto mb-8 text-sm sm:text-base">
+                Our support team is available on WhatsApp daily from 10 AM to 8 PM to assist with order tracking, batch verification, and gift orders.
+            </p>
+            <div class="flex flex-wrap justify-center gap-4">
+                <Button
+                    href={`https://wa.me/923112390620?text=Hello%20Sauvage%20Dior%20Support`}
+                    size="lg"
+                    class="!bg-[#02274F] text-white font-bold hover:!bg-[#011d3b] shadow-lg border border-blue-400/30"
+                    style="background-color: #02274F !important;"
+                >
+                    Chat on WhatsApp ({displayWhatsapp})
+                </Button>
+                <Button href="/track-order/" variant="outline" size="lg" class="border-slate-700 text-white hover:bg-slate-800">
+                    Track Your Delivery
+                </Button>
+            </div>
+        </div>
+    </div>
+</MainLayout>

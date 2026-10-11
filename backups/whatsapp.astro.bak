@@ -1,0 +1,1279 @@
+---
+import AdminLayout from "../../../layouts/AdminLayout.astro";
+import Icon from "../../../components/ui/Icon.astro";
+import { getAllSettings, saveMultipleSettings } from "../../../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let errorMsg = "";
+let successMsg = "";
+let activeTab = "templates";
+
+const url = new URL(Astro.request.url);
+if (url.searchParams.get("tab")) {
+    activeTab = url.searchParams.get("tab") || "templates";
+}
+
+let settings: any = null;
+let webhookLogs: any[] = [];
+
+if (!db) {
+    errorMsg = "Cloudflare D1 Database binding is missing. Please check your wrangler.toml.";
+} else {
+    try {
+        if (Astro.request.method === "POST") {
+            const formData = await Astro.request.formData();
+            const action = formData.get("action")?.toString();
+
+            if (action === "save_settings" || action === "save_template" || action === "save_connection") {
+                const settingsToSave: Record<string, string> = {};
+
+                if (formData.has("whatsapp_enabled")) {
+                    settingsToSave["whatsapp_enabled"] = formData.get("whatsapp_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_api_url")) {
+                    settingsToSave["whatsapp_api_url"] = (formData.get("whatsapp_api_url")?.toString() || "").trim().replace(/\/+$/, "");
+                }
+                if (formData.has("whatsapp_api_key")) {
+                    settingsToSave["whatsapp_api_key"] = formData.get("whatsapp_api_key")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_session_id")) {
+                    settingsToSave["whatsapp_session_id"] = (formData.get("whatsapp_session_id")?.toString() || "").trim();
+                }
+                if (formData.has("whatsapp_template_confirmation")) {
+                    settingsToSave["whatsapp_template_confirmation"] = formData.get("whatsapp_template_confirmation")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_confirmation_enabled")) {
+                    settingsToSave["whatsapp_confirmation_enabled"] = formData.get("whatsapp_confirmation_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_template_thank_you")) {
+                    settingsToSave["whatsapp_template_thank_you"] = formData.get("whatsapp_template_thank_you")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_thank_you_enabled")) {
+                    settingsToSave["whatsapp_thank_you_enabled"] = formData.get("whatsapp_thank_you_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_template_shipped")) {
+                    settingsToSave["whatsapp_template_shipped"] = formData.get("whatsapp_template_shipped")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_shipped_enabled")) {
+                    settingsToSave["whatsapp_shipped_enabled"] = formData.get("whatsapp_shipped_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_return_alert_enabled")) {
+                    settingsToSave["whatsapp_return_alert_enabled"] = formData.get("whatsapp_return_alert_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_return_alert_phone")) {
+                    settingsToSave["whatsapp_return_alert_phone"] = formData.get("whatsapp_return_alert_phone")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_template_returned")) {
+                    settingsToSave["whatsapp_template_returned"] = formData.get("whatsapp_template_returned")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_enabled")) {
+                    settingsToSave["whatsapp_failure_alert_enabled"] = formData.get("whatsapp_failure_alert_enabled") === "1" ? "1" : "0";
+                }
+                if (formData.has("whatsapp_failure_alert_recipients")) {
+                    settingsToSave["whatsapp_failure_alert_recipients"] = formData.get("whatsapp_failure_alert_recipients")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_subject")) {
+                    settingsToSave["whatsapp_failure_alert_subject"] = formData.get("whatsapp_failure_alert_subject")?.toString().trim() || "";
+                }
+                if (formData.has("whatsapp_failure_alert_template")) {
+                    settingsToSave["whatsapp_failure_alert_template"] = formData.get("whatsapp_failure_alert_template")?.toString().trim() || "";
+                }
+
+                const success = await saveMultipleSettings(db, settingsToSave);
+                if (success) {
+                    successMsg = "WhatsApp settings saved successfully!";
+                } else {
+                    errorMsg = "Failed to save settings. Please try again.";
+                }
+            } else if (action === "clear_logs") {
+                try {
+                    await db.prepare(`DELETE FROM webhook_logs`).run();
+                    successMsg = "Webhook logs cleared successfully.";
+                } catch (err: any) {
+                    errorMsg = "Failed to clear logs: " + err.message;
+                }
+            }
+        }
+
+        settings = await getAllSettings(db);
+
+        // Ensure Webhook Logs table exists
+        await db.prepare(`
+            CREATE TABLE IF NOT EXISTS webhook_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sender TEXT,
+                message TEXT,
+                payload TEXT,
+                status TEXT,
+                response TEXT
+            )
+        `).run().catch(() => {});
+
+        const { results } = await db.prepare(`
+            SELECT * FROM webhook_logs 
+            ORDER BY timestamp DESC 
+            LIMIT 50
+        `).all();
+        webhookLogs = results || [];
+    } catch (e: any) {
+        errorMsg = "Database Error: " + e.message;
+    }
+}
+
+const seoTitle = "WhatsApp Automation & Bot - Gionee Pakistan";
+---
+
+<AdminLayout title={seoTitle} activePage="whatsapp">
+    <!-- Header -->
+    <div class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                    <span class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                        <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                            <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766 0-3.18-2.586-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.006c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86.174.086.275.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.144.39-.086s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.099.824z" />
+                        </svg>
+                    </span>
+                    WhatsApp Automation & Alerts
+                </h1>
+                <span class={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${settings?.whatsapp_enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                    <span class={`w-1.5 h-1.5 rounded-full ${settings?.whatsapp_enabled ? 'bg-emerald-600 animate-pulse' : 'bg-gray-400'}`}></span>
+                    {settings?.whatsapp_enabled ? 'Automations Active' : 'Automation Paused'}
+                </span>
+            </div>
+            <p class="text-xs sm:text-sm text-gray-500 mt-1">Configure automated WhatsApp order confirmation, dispatch tracking links, and return escalation alerts.</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <form method="POST" class="inline">
+                <input type="hidden" name="action" value="save_settings" />
+                <input type="hidden" name="whatsapp_enabled" value={settings?.whatsapp_enabled ? "0" : "1"} />
+                <button
+                    type="submit"
+                    class={`px-3.5 py-2 text-xs font-semibold rounded-lg shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer ${
+                        settings?.whatsapp_enabled
+                            ? 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+                            : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
+                >
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" />
+                    </svg>
+                    <span>{settings?.whatsapp_enabled ? 'Pause Automation' : 'Activate Automation'}</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {errorMsg && (
+        <div class="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-red-100 text-red-700 p-1.5 rounded-full shrink-0">
+                <Icon name="alert-triangle" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm">Error Occurred</p>
+                <p class="text-xs mt-0.5">{errorMsg}</p>
+            </div>
+        </div>
+    )}
+
+    {successMsg && (
+        <div class="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl mb-6 flex items-start gap-3 shadow-sm">
+            <div class="bg-emerald-100 text-emerald-700 p-1.5 rounded-full shrink-0">
+                <Icon name="check" class="w-4 h-4" />
+            </div>
+            <div>
+                <p class="font-semibold text-sm text-emerald-800">Success</p>
+                <p class="text-xs mt-0.5 text-emerald-700">{successMsg}</p>
+            </div>
+        </div>
+    )}
+
+    <!-- Navigation Tabs (Matching AI Chatbot Style) -->
+    <div class="mb-6 p-1.5 bg-gray-100/90 rounded-2xl border border-gray-200/80 flex flex-wrap items-center gap-1.5">
+        <a href="?tab=templates" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'templates' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="message-square" class={`w-4 h-4 shrink-0 ${activeTab === 'templates' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Message Templates & Alerts</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'templates' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>5</span>
+        </a>
+        <a href="?tab=connection" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'connection' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="settings" class={`w-4 h-4 shrink-0 ${activeTab === 'connection' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>API & Connection</span>
+        </a>
+        <a href="?tab=logs" class={`px-3.5 py-2 text-xs sm:text-sm rounded-xl transition-all flex items-center gap-2 ${activeTab === 'logs' ? 'bg-white text-gray-900 font-semibold shadow-sm border border-gray-200/60' : 'text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium'}`}>
+            <Icon name="clock" class={`w-4 h-4 shrink-0 ${activeTab === 'logs' ? 'text-brand-orange' : 'text-gray-400'}`} />
+            <span>Webhook Logs</span>
+            <span class={`px-2 py-0.5 rounded-full text-[11px] font-bold ${activeTab === 'logs' ? 'bg-orange-100 text-brand-orange' : 'bg-gray-200/80 text-gray-600'}`}>{webhookLogs.length}</span>
+        </a>
+    </div>
+
+    <!-- TAB 1: MESSAGE TEMPLATES & ALERTS (CARDS GRID) -->
+    {activeTab === "templates" && settings && (
+        <div class="space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <!-- Card 1: Order Confirmation -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.whatsapp_confirmation_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">1. Order Confirmation</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded mt-0.5">Trigger: Checkout Placed</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_confirmation_enabled" value={settings.whatsapp_confirmation_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_confirmation_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-10 h-5.5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-emerald-500"></div>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Sends immediate WhatsApp order summary with COD total and address, asking customer to reply <strong>YES</strong> to verify before packaging.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Recipient:</span>
+                                <span class="font-semibold text-gray-800">Customer Phone</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Required Action:</span>
+                                <span class="font-semibold text-emerald-700">Customer replies "YES"</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_confirmation_enabled ? 'text-emerald-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_confirmation_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_confirmation_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-template-confirmation"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 2: Order Confirmed (Thank You) -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.whatsapp_thank_you_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">2. Order Confirmed (Thank You)</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 px-2 py-0.5 rounded mt-0.5">Trigger: Customer Replies YES</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_thank_you_enabled" value={settings.whatsapp_thank_you_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_thank_you_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-10 h-5.5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-blue-500"></div>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Triggered automatically by webhook when the customer replies "YES". Confirms the order is approved and moving to packaging.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Recipient:</span>
+                                <span class="font-semibold text-gray-800">Customer Phone</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Order Status:</span>
+                                <span class="font-semibold text-blue-700">Auto-moves to Confirmed</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_thank_you_enabled ? 'text-blue-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_thank_you_enabled ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_thank_you_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-template-thank-you"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 3: Order Shipped -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.whatsapp_shipped_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">3. Order Shipped Notification</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-purple-700 bg-purple-50 px-2 py-0.5 rounded mt-0.5">Trigger: Status Changed to Shipped</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_shipped_enabled" value={settings.whatsapp_shipped_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_shipped_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-10 h-5.5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-purple-500"></div>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Sent when courier pickup is verified (via n8n or chatbot). Includes direct tracking number and link to your store's live tracking page.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Recipient:</span>
+                                <span class="font-semibold text-gray-800">Customer Phone</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Tracking Link:</span>
+                                <span class="font-mono text-purple-700">https://gionee.com.pk/track-order/.../</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_shipped_enabled ? 'text-purple-600' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_shipped_enabled ? 'bg-purple-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_shipped_enabled ? 'Active' : 'Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-template-shipped"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 4: Order Returned Alert (Admin Escalation) -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
+                    settings.whatsapp_return_alert_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">4. Order Returned Alert</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-amber-800 bg-amber-100 px-2 py-0.5 rounded mt-0.5">Trigger: Status Changed to Returned</span>
+                                </div>
+                            </div>
+
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_return_alert_enabled" value={settings.whatsapp_return_alert_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_return_alert_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-10 h-5.5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-amber-500"></div>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 leading-relaxed mb-4">
+                            Instantly sends a consolidated alert message to your admin number with customer contact and exact courier return reason so your team can escalate immediately.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1 mb-4">
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Alert Recipient:</span>
+                                <span class="font-mono font-bold text-gray-900">{settings.whatsapp_return_alert_phone || settings.public_whatsapp_number || "923112390620"}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Batch Mode:</span>
+                                <span class="font-semibold text-emerald-700">1 single message for multiple orders</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_return_alert_enabled ? 'text-amber-700' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_return_alert_enabled ? 'bg-amber-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_return_alert_enabled ? 'Alerts Enabled' : 'Alerts Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-template-returned"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Card 5: WhatsApp Disconnection & Failure Alert (Email) -->
+                <div class={`rounded-2xl border p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between md:col-span-2 ${
+                    settings.whatsapp_failure_alert_enabled ? 'bg-white border-gray-200' : 'bg-gray-50/70 border-gray-200 opacity-90'
+                }`}>
+                    <div>
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                                    <Icon name="alert-triangle" class="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-gray-900 text-base">5. WhatsApp Disconnect / Failure Email Alert</h3>
+                                    <span class="inline-block text-[10px] font-bold uppercase tracking-wider text-red-700 bg-red-50 px-2 py-0.5 rounded mt-0.5">Trigger: OpenWA Daemon Inactive or Error</span>
+                                </div>
+                            </div>
+                            <!-- Switch -->
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="action" value="save_settings" />
+                                <input type="hidden" name="whatsapp_failure_alert_enabled" value={settings.whatsapp_failure_alert_enabled ? "0" : "1"} />
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={settings.whatsapp_failure_alert_enabled}
+                                        onchange="this.form.submit()"
+                                        class="sr-only peer"
+                                    />
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                                </label>
+                            </form>
+                        </div>
+
+                        <p class="text-xs text-gray-600 line-clamp-2 mb-3">
+                            Automatically sends urgent email notifications to admin team whenever the WhatsApp session disconnects, goes idle, or fails to send outbound messages.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs space-y-1.5 mb-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] text-gray-500 gap-1">
+                                <span class="font-semibold text-gray-700">Recipients:</span>
+                                <span class="font-mono text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-200">{settings.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}</span>
+                            </div>
+                            <div class="flex items-center justify-between text-[11px] text-gray-500">
+                                <span>Anti-Spam Throttling:</span>
+                                <span class="font-semibold text-emerald-700">Max 1 email alert per 15 minutes</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                        <span class={`text-xs font-semibold flex items-center gap-1.5 ${settings.whatsapp_failure_alert_enabled ? 'text-red-700' : 'text-gray-400'}`}>
+                            <span class={`w-2 h-2 rounded-full ${settings.whatsapp_failure_alert_enabled ? 'bg-red-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                            {settings.whatsapp_failure_alert_enabled ? 'Alert Active' : 'Alert Disabled'}
+                        </span>
+                        <button
+                            type="button"
+                            class="open-modal-btn px-4 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            data-modal-target="modal-template-failure-alert"
+                        >
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                            <span>Configure & Preview</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )}
+
+    <!-- TAB 2: API & CONNECTION SETTINGS -->
+    {activeTab === "connection" && settings && (
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-8">
+            <form method="POST" class="space-y-6">
+                <input type="hidden" name="action" value="save_connection" />
+
+                <div class="border-b border-gray-100 pb-4 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-base font-bold text-gray-900">OpenWA API Connection Details</h2>
+                        <p class="text-xs text-gray-500 mt-0.5">Self-hosted WhatsApp API (WAHA / OpenWA) endpoint credentials.</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input
+                            type="checkbox"
+                            name="whatsapp_enabled"
+                            value="1"
+                            checked={settings.whatsapp_enabled}
+                            class="sr-only peer"
+                        />
+                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                        <span class="ml-3 text-xs font-semibold text-gray-700">Automation Active</span>
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">OpenWA API URL</label>
+                        <input
+                            type="url"
+                            name="whatsapp_api_url"
+                            value={settings.whatsapp_api_url}
+                            placeholder="https://wa-api.yourdomain.com"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">OpenWA X-API-Key</label>
+                        <input
+                            type="password"
+                            name="whatsapp_api_key"
+                            value={settings.whatsapp_api_key}
+                            placeholder="••••••••••••••••"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Session ID</label>
+                        <input
+                            type="text"
+                            name="whatsapp_session_id"
+                            value={settings.whatsapp_session_id}
+                            placeholder="gionee-session"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange"
+                        />
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-sm font-bold text-gray-800 mb-1">Return Alerts Recipient Phone</h3>
+                        <p class="text-xs text-gray-500 mb-2">Admin / manager phone number where return alerts and escalation messages are delivered.</p>
+                        <input
+                            type="text"
+                            name="whatsapp_return_alert_phone"
+                            value={settings.whatsapp_return_alert_phone}
+                            placeholder="e.g. 03112390620 or 923112390620"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                        />
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-gray-800 mb-1">Failure Alert Email Recipients</h3>
+                        <p class="text-xs text-gray-500 mb-2">Email addresses notified if WhatsApp goes down (separated by commas).</p>
+                        <input
+                            type="text"
+                            name="whatsapp_failure_alert_recipients"
+                            value={settings.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}
+                            placeholder="support@gionee.com.pk, aashirblogging@gmail.com"
+                            class="w-full text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                        />
+                    </div>
+                </div>
+
+                <div class="pt-6 border-t border-gray-100 flex justify-end">
+                    <button
+                        type="submit"
+                        class="bg-brand-orange text-white text-sm font-semibold px-6 py-2.5 rounded-xl hover:bg-orange-600 transition-colors shadow-xs cursor-pointer"
+                    >
+                        Save Connection Settings
+                    </button>
+                </div>
+            </form>
+        </div>
+    )}
+
+    <!-- TAB 3: WEBHOOK LOGS -->
+    {activeTab === "logs" && (
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-8">
+            <div class="border-b border-gray-100 pb-4 flex justify-between items-center mb-6">
+                <div>
+                    <h3 class="text-base font-bold text-gray-900">Recent API Webhook Events</h3>
+                    <p class="text-xs text-gray-500 mt-0.5">Live incoming customer replies and dispatch events.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <form method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete all WhatsApp webhook logs? This cannot be undone.');">
+                        <input type="hidden" name="action" value="clear_logs" />
+                        <button
+                            type="submit"
+                            class="bg-red-50 text-red-600 hover:bg-red-100 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                            <Icon name="trash-2" class="w-3.5 h-3.5" />
+                            <span>Clear Logs</span>
+                        </button>
+                    </form>
+                    <button
+                        type="button"
+                        onclick="window.location.reload()"
+                        class="bg-gray-100 text-gray-600 hover:bg-gray-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                        <Icon name="refresh-cw" class="w-3.5 h-3.5" />
+                        <span>Refresh</span>
+                    </button>
+                </div>
+            </div>
+
+            {webhookLogs.length === 0 ? (
+                <div class="text-center py-12 border border-dashed border-gray-200 rounded-xl text-gray-400 space-y-2">
+                    <div class="flex justify-center">
+                        <div class="p-3 bg-gray-100 rounded-full text-gray-400">
+                            <Icon name="mail" class="w-6 h-6" />
+                        </div>
+                    </div>
+                    <p class="text-sm font-medium">No webhook logs recorded yet.</p>
+                    <p class="text-xs max-w-sm mx-auto">Send an order confirmation reply or a test message to populate real-time events.</p>
+                </div>
+            ) : (
+                <div class="overflow-x-auto border border-gray-200 rounded-xl shadow-xs">
+                    <table class="min-w-full divide-y divide-gray-100 text-left text-xs">
+                        <thead class="bg-gray-50 text-gray-600 font-semibold uppercase tracking-wider">
+                            <tr>
+                                <th class="px-4 py-3">Time</th>
+                                <th class="px-4 py-3">Sender</th>
+                                <th class="px-4 py-3">Message</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3">Outcome</th>
+                                <th class="px-4 py-3 text-right">Payload</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 text-gray-700 bg-white">
+                            {webhookLogs.map((log: any) => (
+                                <>
+                                    <tr class="hover:bg-gray-50/50">
+                                        <td class="px-4 py-3 whitespace-nowrap text-gray-500 font-mono text-[11px]">
+                                            {new Date(log.timestamp.replace(' ', 'T') + 'Z').toLocaleString('en-PK', { timeZone: 'Asia/Karachi', dateStyle: 'short', timeStyle: 'medium' })}
+                                        </td>
+                                        <td class="px-4 py-3 font-semibold text-gray-800">
+                                            {log.sender || "—"}
+                                        </td>
+                                        <td class="px-4 py-3 max-w-[150px] truncate font-mono text-gray-600 text-[11px]" title={log.message}>
+                                            {log.message || "—"}
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap">
+                                            <span class={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                                log.status === "success" 
+                                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200/50" 
+                                                    : log.status === "ignored"
+                                                    ? "bg-gray-50 text-gray-600 border border-gray-200/50"
+                                                    : "bg-red-50 text-red-700 border border-red-200/50"
+                                            }`}>
+                                                {log.status}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3 text-gray-600 max-w-[200px] truncate" title={log.response}>
+                                            {log.response || "—"}
+                                        </td>
+                                        <td class="px-4 py-3 whitespace-nowrap text-right font-medium">
+                                            <button
+                                                type="button"
+                                                class="text-brand-orange hover:text-orange-700 font-semibold cursor-pointer"
+                                                data-view-payload-id={log.id}
+                                            >
+                                                View JSON
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    <tr id={`payload-row-${log.id}`} class="hidden bg-gray-50/40">
+                                        <td colspan="6" class="px-6 py-4">
+                                            <div class="bg-gray-900 text-gray-100 rounded-xl p-4 overflow-x-auto font-mono text-[11px] leading-relaxed max-h-96 select-all shadow-inner border border-gray-800 text-left">
+                                                <pre>{JSON.stringify(JSON.parse(log.payload || "{}"), null, 2)}</pre>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    )}
+
+    <!-- ========================================================================= -->
+    <!-- MODALS FOR CONFIGURE & PREVIEW EACH TEMPLATE -->
+    <!-- ========================================================================= -->
+
+    <!-- Modal 1: Confirmation Template -->
+    <div id="modal-template-confirmation" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm">1</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Confirmation Template</h3>
+                        <p class="text-xs text-gray-500">Sent immediately upon checkout asking customer to verify with "YES".</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+                <input type="hidden" name="action" value="save_template" />
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Message Template Text</label>
+                        <textarea
+                            name="whatsapp_template_confirmation"
+                            id="modal_input_confirmation"
+                            rows="12"
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.whatsapp_template_confirmation}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{order_id}">{"{order_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{items}">{"{items}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{total_amount}">{"{total_amount}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{address}">{"{address}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_confirmation" data-tag="{city}">{"{city}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live WhatsApp Phone Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live WhatsApp Phone Preview</span>
+                        <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-lg border border-gray-800" style="background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-size: cover; background-blend-mode: overlay;">
+                            <div class="bg-[#202c33] px-4 py-2.5 flex items-center gap-3">
+                                <div class="w-8 h-8 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                <div>
+                                    <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                    <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                </div>
+                            </div>
+                            <div class="p-4 min-h-[260px] flex flex-col justify-end">
+                                <div id="modal_preview_confirmation" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3.5 shadow-sm whitespace-pre-wrap font-sans relative"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal 2: Thank You Template -->
+    <div id="modal-template-thank-you" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">2</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Confirmed (Thank You) Template</h3>
+                        <p class="text-xs text-gray-500">Sent when customer replies "YES" confirming their order.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+                <input type="hidden" name="action" value="save_template" />
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Message Template Text</label>
+                        <textarea
+                            name="whatsapp_template_thank_you"
+                            id="modal_input_thank_you"
+                            rows="12"
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.whatsapp_template_thank_you}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_thank_you" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_thank_you" data-tag="{order_id}">{"{order_id}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live WhatsApp Phone Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live WhatsApp Phone Preview</span>
+                        <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-lg border border-gray-800" style="background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-size: cover; background-blend-mode: overlay;">
+                            <div class="bg-[#202c33] px-4 py-2.5 flex items-center gap-3">
+                                <div class="w-8 h-8 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                <div>
+                                    <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                    <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                </div>
+                            </div>
+                            <div class="p-4 min-h-[260px] flex flex-col justify-end">
+                                <div id="modal_preview_thank_you" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3.5 shadow-sm whitespace-pre-wrap font-sans relative"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal 3: Shipped Template -->
+    <div id="modal-template-shipped" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold text-sm">3</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Shipped Template</h3>
+                        <p class="text-xs text-gray-500">Sent when the order is marked Shipped with live tracking number and link.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+                <input type="hidden" name="action" value="save_template" />
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 mb-1.5">Message Template Text</label>
+                        <textarea
+                            name="whatsapp_template_shipped"
+                            id="modal_input_shipped"
+                            rows="12"
+                            class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                        >{settings?.whatsapp_template_shipped}</textarea>
+
+                        <div class="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_shipped" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_shipped" data-tag="{order_id}">{"{order_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_shipped" data-tag="{tracking_no}">{"{tracking_no}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_shipped" data-tag="{tracking_url}">{"{tracking_url}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live WhatsApp Phone Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live WhatsApp Phone Preview</span>
+                        <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-lg border border-gray-800" style="background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-size: cover; background-blend-mode: overlay;">
+                            <div class="bg-[#202c33] px-4 py-2.5 flex items-center gap-3">
+                                <div class="w-8 h-8 bg-brand-orange rounded-full flex items-center justify-center text-white font-bold text-xs">GP</div>
+                                <div>
+                                    <div class="text-white text-xs font-semibold">Gionee Pakistan Official</div>
+                                    <div class="text-[#8696a0] text-[10px]">Verified Business</div>
+                                </div>
+                            </div>
+                            <div class="p-4 min-h-[260px] flex flex-col justify-end">
+                                <div id="modal_preview_shipped" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3.5 shadow-sm whitespace-pre-wrap font-sans relative"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal 4: Return Alert Template -->
+    <div id="modal-template-returned" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-sm">4</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure Order Returned Alert (Admin Escalation)</h3>
+                        <p class="text-xs text-gray-500">Delivered to admin WhatsApp when parcels are marked returned by courier scan.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+                <input type="hidden" name="action" value="save_template" />
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Admin Alert WhatsApp Number</label>
+                            <input
+                                type="text"
+                                name="whatsapp_return_alert_phone"
+                                value={settings?.whatsapp_return_alert_phone || settings?.public_whatsapp_number || "923112390620"}
+                                placeholder="e.g. 03112390620 or 923112390620"
+                                class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1">This number receives the automated return alert so you can call the customer immediately.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">Message Template Text</label>
+                            <textarea
+                                name="whatsapp_template_returned"
+                                id="modal_input_returned"
+                                rows="8"
+                                class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50"
+                            >{settings?.whatsapp_template_returned}</textarea>
+                        </div>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{orders_list}">{"{orders_list}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{count}">{"{count}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{order_id}">{"{order_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{customer_name}">{"{customer_name}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{customer_phone}">{"{customer_phone}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{city}">{"{city}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{tracking_no}">{"{tracking_no}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_returned" data-tag="{return_reason}">{"{return_reason}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live WhatsApp Phone Preview -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live WhatsApp Phone Preview (Admin Alert)</span>
+                        <div class="bg-[#0b141a] rounded-2xl overflow-hidden shadow-lg border border-gray-800" style="background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); background-size: cover; background-blend-mode: overlay;">
+                            <div class="bg-[#202c33] px-4 py-2.5 flex items-center gap-3">
+                                <div class="w-8 h-8 bg-amber-600 rounded-full flex items-center justify-center text-white font-bold text-xs">⚠️</div>
+                                <div>
+                                    <div class="text-white text-xs font-semibold">Gionee Admin Alerts</div>
+                                    <div class="text-[#8696a0] text-[10px]">Return Escalation</div>
+                                </div>
+                            </div>
+                            <div class="p-4 min-h-[260px] flex flex-col justify-end">
+                                <div id="modal_preview_returned" class="bg-[#202c33] text-[#e9edef] text-xs leading-relaxed rounded-xl rounded-tl-none p-3.5 shadow-sm whitespace-pre-wrap font-sans relative"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 5: WHATSAPP FAILURE / DISCONNECT ALERT (EMAIL) -->
+    <div id="modal-template-failure-alert" class="template-modal fixed inset-0 z-50 bg-black/60 backdrop-blur-xs hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0 bg-gray-50/50">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-red-100 text-red-700 flex items-center justify-center font-bold text-xs">⚠️</div>
+                    <div>
+                        <h3 class="font-bold text-gray-900 text-sm sm:text-base">Configure WhatsApp Disconnect Email Alert</h3>
+                        <p class="text-xs text-gray-500">Automatically dispatches urgent email notifications to admins when WhatsApp service stops.</p>
+                    </div>
+                </div>
+                <button type="button" class="close-modal-btn text-gray-400 hover:text-gray-700 p-1.5 rounded-lg cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <form method="POST" class="flex-1 overflow-y-auto p-6 flex flex-col justify-between">
+                <input type="hidden" name="action" value="save_template" />
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Recipients Email Addresses (comma-separated)</label>
+                            <input
+                                type="text"
+                                name="whatsapp_failure_alert_recipients"
+                                value={settings?.whatsapp_failure_alert_recipients || "support@gionee.com.pk, aashirblogging@gmail.com"}
+                                placeholder="support@gionee.com.pk, aashirblogging@gmail.com"
+                                class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono"
+                            />
+                            <p class="text-[11px] text-gray-500 mt-1">Both emails will receive instant alerts when a connection error is detected.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1">Email Subject Line</label>
+                            <input
+                                type="text"
+                                name="whatsapp_failure_alert_subject"
+                                value={settings?.whatsapp_failure_alert_subject}
+                                class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl px-3.5 py-2 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-medium"
+                            />
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-700 mb-1.5">HTML Email Template</label>
+                            <textarea
+                                name="whatsapp_failure_alert_template"
+                                id="modal_input_failure_alert"
+                                rows="8"
+                                class="w-full text-xs sm:text-sm border border-gray-200 rounded-xl p-3.5 focus:outline-none focus:border-brand-orange focus:ring-1 focus:ring-brand-orange font-mono resize-y leading-relaxed bg-gray-50/50 text-gray-800"
+                            >{settings?.whatsapp_failure_alert_template}</textarea>
+                        </div>
+
+                        <div class="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                            <span class="text-[11px] font-semibold text-gray-700 block mb-1.5">Click placeholder to insert:</span>
+                            <div class="flex flex-wrap gap-1.5">
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_failure_alert" data-tag="{error_message}">{"{error_message}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_failure_alert" data-tag="{session_id}">{"{session_id}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_failure_alert" data-tag="{timestamp}">{"{timestamp}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_failure_alert" data-tag="{admin_url}">{"{admin_url}"}</button>
+                                <button type="button" class="insert-tag px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-mono text-brand-orange hover:bg-orange-50 cursor-pointer" data-target="modal_input_failure_alert" data-tag="{store_url}">{"{store_url}"}</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Email Preview Frame -->
+                    <div>
+                        <span class="block text-xs font-semibold text-gray-700 mb-1.5">Live HTML Email Preview</span>
+                        <div class="border border-gray-200 rounded-xl overflow-hidden shadow-xs bg-gray-100">
+                            <div class="bg-gray-200 px-3 py-1.5 border-b border-gray-300 text-[11px] text-gray-600 flex items-center gap-1.5 font-mono">
+                                <span class="w-2.5 h-2.5 rounded-full bg-red-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-yellow-400 inline-block"></span>
+                                <span class="w-2.5 h-2.5 rounded-full bg-green-400 inline-block"></span>
+                                <span class="ml-2">Inbox Preview &mdash; Urgent Alert</span>
+                            </div>
+                            <iframe id="modal_preview_failure_alert" class="w-full h-[360px] bg-white border-0" title="Email Live Preview"></iframe>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="pt-5 border-t border-gray-100 flex justify-end gap-2.5 mt-6 shrink-0">
+                    <button type="button" class="close-modal-btn px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl cursor-pointer">Cancel</button>
+                    <button type="submit" class="px-5 py-2 text-xs font-semibold text-white bg-brand-orange hover:bg-orange-600 rounded-xl shadow-xs transition-colors cursor-pointer">Save Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</AdminLayout>
+
+<script>
+    const initWhatsAppSettings = () => {
+        // Modal Open/Close handlers
+        const openModalButtons = document.querySelectorAll(".open-modal-btn");
+        const closeModalButtons = document.querySelectorAll(".close-modal-btn");
+        const allModals = document.querySelectorAll(".template-modal");
+
+        openModalButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const modalId = btn.getAttribute("data-modal-target");
+                const targetModal = document.getElementById(modalId);
+                if (targetModal) {
+                    targetModal.classList.remove("hidden");
+                    targetModal.classList.add("flex");
+                }
+            });
+        });
+
+        closeModalButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                allModals.forEach((m) => {
+                    m.classList.add("hidden");
+                    m.classList.remove("flex");
+                });
+            });
+        });
+
+        allModals.forEach((modal) => {
+            if (modal.dataset.bound) return;
+            modal.dataset.bound = "true";
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) {
+                    modal.classList.add("hidden");
+                    modal.classList.remove("flex");
+                }
+            });
+        });
+
+        // Insert Placeholder tag into active textarea
+        const insertTagButtons = document.querySelectorAll(".insert-tag");
+        insertTagButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const targetInputId = btn.getAttribute("data-target");
+                const tag = btn.getAttribute("data-tag");
+                const input = document.getElementById(targetInputId) as HTMLTextAreaElement;
+                if (input && tag) {
+                    const start = input.selectionStart || 0;
+                    const end = input.selectionEnd || 0;
+                    const val = input.value;
+                    input.value = val.substring(0, start) + tag + val.substring(end);
+                    input.focus();
+                    input.selectionStart = input.selectionEnd = start + tag.length;
+                    input.dispatchEvent(new Event("input"));
+                }
+            });
+        });
+
+        // Webhook Payload JSON View
+        const viewPayloadButtons = document.querySelectorAll("[data-view-payload-id]");
+        viewPayloadButtons.forEach((btn) => {
+            if (btn.dataset.bound) return;
+            btn.dataset.bound = "true";
+            btn.addEventListener("click", () => {
+                const logId = btn.getAttribute("data-view-payload-id");
+                const row = document.getElementById(`payload-row-${logId}`);
+                if (row) {
+                    if (row.classList.contains("hidden")) {
+                        row.classList.remove("hidden");
+                        btn.textContent = "Hide JSON";
+                    } else {
+                        row.classList.add("hidden");
+                        btn.textContent = "View JSON";
+                    }
+                }
+            });
+        });
+
+        // WhatsApp Live Formatting Engine for Modals
+        const formatWhatsAppText = (text: string) => {
+            if (!text) return "";
+            
+            let formatted = text
+                // Placeholders sample replacement
+                .replace(/{count}/g, "2")
+                .replace(/{orders_list}/g, "<strong>1. Order #GPK09070</strong>\n• <strong>Name:</strong> Ali Raza\n• <strong>Phone:</strong> 03001234567\n• <strong>City:</strong> Lahore\n• <strong>Tracking:</strong> SA7535276788 (Leopards)\n• <strong>Return Reason:</strong> Refused to accept\n\n<strong>2. Order #GPK09085</strong>\n• <strong>Name:</strong> Usman Tariq\n• <strong>Phone:</strong> 03219876543\n• <strong>City:</strong> Karachi\n• <strong>Tracking:</strong> 21783920192837 (PostEx)\n• <strong>Return Reason:</strong> Customer not available / phone powered off")
+                .replace(/{customer_name}/g, "Ayesha Khan")
+                .replace(/{customer_phone}/g, "03001234567")
+                .replace(/{city}/g, "Lahore")
+                .replace(/{courier_name}/g, "Leopards Courier")
+                .replace(/{return_reason}/g, "Refused to accept / not answering")
+                .replace(/{courier_status}/g, "Refused to accept")
+                .replace(/{order_id}/g, "#GPK09070")
+                .replace(/{items}/g, "- Gionee Handsfree Type-C (Pack of 2) x1")
+                .replace(/{total_amount}/g, "2,750")
+                .replace(/{address}/g, "House 412, Sector Y, DHA Phase 3")
+                .replace(/{tracking_no}/g, "SA7535276788")
+                .replace(/{tracking_url}/g, "https://gionee.com.pk/track-order/GPK09070/")
+                
+                // Markdown formatting
+                .replace(/\*(.*?)\*/g, "<strong>$1</strong>")
+                .replace(/_(.*?)_/g, "<em>$1</em>")
+                .replace(/~(.*?)~/g, "<del>$1</del>")
+                
+                // Line breaks
+                .replace(/\n/g, "<br>");
+                
+            return formatted + '<div class="text-right mt-1.5"><span class="text-[10px] text-[#8696a0]">10:54 AM</span></div>';
+        };
+
+        const setupModalPreview = (inputId: string, previewId: string) => {
+            const input = document.getElementById(inputId) as HTMLTextAreaElement;
+            const preview = document.getElementById(previewId);
+            if (input && preview && !input.dataset.bound) {
+                input.dataset.bound = "true";
+                const update = () => {
+                    preview.innerHTML = formatWhatsAppText(input.value);
+                };
+                input.addEventListener("input", update);
+                update(); // initial render
+            }
+        };
+
+        const setupIframePreview = (inputId: string, iframeId: string) => {
+            const input = document.getElementById(inputId) as HTMLTextAreaElement;
+            const iframe = document.getElementById(iframeId) as HTMLIFrameElement;
+            if (input && iframe && !input.dataset.bound) {
+                input.dataset.bound = "true";
+                const update = () => {
+                    let html = input.value || "";
+                    html = html
+                        .replace(/{error_message}/g, "OpenWA API returned HTTP 400: Session 'gionee-session' is not active. Start the session first.")
+                        .replace(/{session_id}/g, "gionee-session")
+                        .replace(/{timestamp}/g, new Date().toLocaleString("en-PK", { timeZone: "Asia/Karachi", dateStyle: "full", timeStyle: "medium" }))
+                        .replace(/{admin_url}/g, "https://gionee.com.pk/admin/settings/whatsapp/?tab=connection")
+                        .replace(/{store_url}/g, "https://gionee.com.pk/");
+                    iframe.srcdoc = html;
+                };
+                input.addEventListener("input", update);
+                update();
+            }
+        };
+
+        setupModalPreview("modal_input_confirmation", "modal_preview_confirmation");
+        setupModalPreview("modal_input_thank_you", "modal_preview_thank_you");
+        setupModalPreview("modal_input_shipped", "modal_preview_shipped");
+        setupModalPreview("modal_input_returned", "modal_preview_returned");
+        setupIframePreview("modal_input_failure_alert", "modal_preview_failure_alert");
+    };
+
+    initWhatsAppSettings();
+    document.addEventListener("astro:page-load", initWhatsAppSettings);
+</script>

@@ -1,0 +1,20 @@
+---
+const { siteUrl = "https://sauvagedior.pk" } = Astro.props;
+
+const websiteSchema = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "Dior Sauvage Pakistan",
+    url: siteUrl,
+    potentialAction: {
+        "@type": "SearchAction",
+        target: {
+            "@type": "EntryPoint",
+            urlTemplate: `${siteUrl}/shop?q={search_term_string}`,
+        },
+        "query-input": "required name=search_term_string",
+    },
+};
+---
+
+<script type="application/ld+json" set:html={JSON.stringify(websiteSchema)} />

@@ -1,0 +1,328 @@
+---
+import Icon from "./ui/Icon.astro";
+import Button from "./ui/Button.astro";
+import CartDrawer from "./CartDrawer.astro";
+import { Image } from "astro:assets";
+import logoImage from "../assets/logo.png";
+
+const navItems = [
+    { label: "Home", href: "/" },
+    { label: "Shop", href: "/shop/" },
+    { label: "About", href: "/about/" },
+    { label: "FAQs", href: "/faq/" },
+    { label: "Track Order", href: "/track-order/" },
+    { label: "Contact", href: "/contact/" },
+];
+
+import { getAllSettings } from "../utils/settings";
+const db = Astro.locals.runtime?.env?.DB;
+let settings: any = { announcement_bar_enabled: '1', smart_sticky_header_enabled: '1', announcement_bar_text: '#1 Brand Leftover Lot Fragrance Store in Pakistan' };
+if (db) {
+    try {
+        settings = await getAllSettings(db);
+    } catch (e) {
+        console.error("Failed to load header settings:", e);
+    }
+}
+const isSmartSticky = settings.smart_sticky_header_enabled === '1';
+---
+
+<div class="sticky top-0 z-[60] w-full pointer-events-none">
+    {settings.announcement_bar_enabled !== '0' && (
+        <div id="announcement-bar" class="pointer-events-auto bg-[#02274F] text-white text-center py-2 px-4 text-[11px] md:text-[13px] font-semibold tracking-wide shadow-sm relative z-20">
+            {settings.announcement_bar_text || "#1 Brand Leftover Lot Fragrance Store in Pakistan"}
+        </div>
+    )}
+
+    <header
+        id="main-header"
+        class="pointer-events-auto w-full border-b border-gray-100 bg-white/90 backdrop-blur-md transition-transform duration-300 ease-in-out relative z-10"
+        data-smart-sticky={isSmartSticky ? 'true' : 'false'}
+    >
+        <div
+            class="container mx-auto px-4 max-w-6xl h-16 flex items-center justify-between relative"
+        >
+            {/* Mobile Menu Button (Left on mobile, hidden on desktop) */}
+            <div class="flex items-center md:hidden z-10">
+                <button
+                    id="mobile-menu-btn"
+                    class="p-2 -ml-2 text-gray-700 hover:text-black transition-colors"
+                    aria-label="Menu"
+                >
+                    <Icon name="menu" class="w-6 h-6" />
+                </button>
+            </div>
+
+            {/* Logo (Centered on mobile via absolute positioning, left-aligned on desktop) */}
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none md:static md:inset-auto md:pointer-events-auto">
+                <a href="/" class="pointer-events-auto block py-1">
+                    <img
+                        src="/logo.png"
+                        alt="Dior Pakistan"
+                        width="200"
+                        height="100"
+                        class="h-9 sm:h-10 md:h-12 w-auto object-contain"
+                    />
+                </a>
+            </div>
+
+            {/* Desktop Nav */}
+            <nav class="hidden md:flex items-center gap-6">
+                {
+                    navItems.map((item) => (
+                        item.subItems ? (
+                            <div class="relative group">
+                                <button class="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-black transition-colors">
+                                    {item.label}
+                                    <Icon name="chevron-down" class="w-4 h-4 opacity-50" />
+                                </button>
+                                <div class="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                                    <div class="py-2">
+                                        {item.subItems.map(subItem => (
+                                            <a
+                                                href={subItem.href}
+                                                class="block px-4 py-2 text-sm text-gray-600 hover:text-black hover:bg-gray-100 transition-colors"
+                                            >
+                                                {subItem.label}
+                                            </a>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <a
+                                href={item.href}
+                                class="text-sm font-medium text-gray-600 hover:text-black transition-colors"
+                            >
+                                {item.label}
+                            </a>
+                        )
+                    ))
+                }
+            </nav>
+
+            {/* Actions (Cart on right on both mobile & desktop) */}
+            <div class="flex items-center gap-3 z-10">
+                <button
+                    id="cart-btn"
+                    class="relative p-2 -mr-2 sm:mr-0 text-gray-700 hover:text-black transition-colors"
+                    aria-label="Cart"
+                >
+                    <Icon name="shopping-cart" class="w-5 h-5" />
+                    <span id="cart-badge" class="absolute top-1 right-1 hidden">
+                        <span
+                            class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#02274F] opacity-75"
+                        ></span>
+                        <span
+                            class="relative inline-flex rounded-full h-2 w-2 bg-[#02274F]"
+                        ></span>
+                    </span>
+                    <span
+                        id="cart-count"
+                        class="absolute -top-1 -right-1 bg-[#02274F] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center hidden"
+                        >0</span
+                    >
+                </button>
+            </div>
+        </div>
+
+    {/* Mobile Menu */}
+    <div
+        id="mobile-menu"
+        class="hidden md:hidden border-t border-gray-100 bg-white absolute top-16 left-0 w-full shadow-lg"
+    >
+        <nav class="flex flex-col p-4 space-y-4">
+            {
+                navItems.map((item) => (
+                    item.subItems ? (
+                        <div class="last:border-0">
+                            <button class="mobile-dropdown-toggle w-full flex items-center justify-between text-sm font-medium text-gray-600 hover:text-black transition-colors py-2 border-b border-gray-50 focus:outline-none">
+                                {item.label}
+                                <svg class="w-4 h-4 text-gray-400 transform transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            <div class="mobile-dropdown-menu hidden flex-col pl-4 space-y-2 border-l-2 border-brand-orange/20 ml-2 my-2">
+                                {item.subItems.map(subItem => (
+                                    <a
+                                        href={subItem.href}
+                                        class="text-sm font-medium text-gray-500 hover:text-black transition-colors block py-1.5"
+                                    >
+                                        {subItem.label}
+                                    </a>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <a
+                            href={item.href}
+                            class="text-sm font-medium text-gray-600 hover:text-black transition-colors block py-2 border-b border-gray-50 last:border-0"
+                        >
+                            {item.label}
+                        </a>
+                    )
+                ))
+            }
+    </div>
+</header>
+</div>
+
+{/* Floating Cart Drawer Handle Ribbon (Visible only when header is scrolled away) */}
+<button
+    id="mobile-fab-cart"
+    class="fixed right-0 top-28 sm:top-32 z-[45] bg-brand-orange text-white pl-2.5 pr-2 py-2 sm:pl-3 sm:pr-2.5 sm:py-2.5 rounded-l-lg shadow-xl transition-all duration-300 translate-x-full opacity-0 flex items-center gap-1.5 border-l border-y border-white/40 hover:bg-orange-600 hover:pl-3.5 group cursor-pointer"
+    aria-label="Open Cart"
+    style="box-shadow: -4px 6px 18px rgba(0, 0, 0, 0.2);"
+>
+    <Icon name="shopping-cart" class="w-4.5 h-4.5 sm:w-5 sm:h-5 text-white transition-transform group-hover:scale-110" />
+    <span
+        id="fab-cart-count"
+        class="bg-white text-brand-orange text-[9px] sm:text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[16px] text-center hidden shadow-xs leading-none"
+    >0</span>
+</button>
+
+<CartDrawer />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  "itemListElement": [
+    {
+      "@type": "SiteNavigationElement",
+      "position": 1,
+      "name": "Home",
+      "url": "https://sauvagedior.pk/"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "position": 2,
+      "name": "Shop",
+      "url": "https://sauvagedior.pk/shop/"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "position": 3,
+      "name": "About",
+      "url": "https://sauvagedior.pk/about/"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "position": 4,
+      "name": "FAQs",
+      "url": "https://sauvagedior.pk/faq/"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "position": 5,
+      "name": "Track Order",
+      "url": "https://sauvagedior.pk/track-order/"
+    },
+    {
+      "@type": "SiteNavigationElement",
+      "position": 6,
+      "name": "Contact",
+      "url": "https://sauvagedior.pk/contact/"
+    }
+  ]
+}
+</script>
+
+<script>
+    import { isCartOpen, cartItems } from "../stores/cart";
+
+    const cartBtn = document.getElementById("cart-btn");
+    const cartBadge = document.getElementById("cart-badge"); // The dot
+    const cartCount = document.getElementById("cart-count"); // The number
+    const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+    const mobileMenu = document.getElementById("mobile-menu");
+
+    mobileMenuBtn?.addEventListener("click", () => {
+        mobileMenu?.classList.toggle("hidden");
+    });
+
+    document.addEventListener("click", (e) => {
+        const toggle = (e.target as HTMLElement).closest(".mobile-dropdown-toggle");
+        if (toggle) {
+            const menu = toggle.nextElementSibling;
+            const icon = toggle.querySelector("svg");
+            if (menu) {
+                menu.classList.toggle("hidden");
+                menu.classList.toggle("flex");
+            }
+            if (icon) icon.classList.toggle("rotate-180");
+        }
+    });
+
+    cartBtn?.addEventListener("click", () => {
+        isCartOpen.set(true);
+    });
+
+    cartItems.subscribe((items) => {
+        const count = items.reduce((sum, item) => sum + item.quantity, 0);
+
+        if (count > 0) {
+            cartBadge?.classList.add("hidden"); // Hide the simple dot
+            cartCount?.classList.remove("hidden"); // Show the number
+            if (cartCount) cartCount.textContent = count.toString();
+            
+            // FAB count
+            const fabCartCount = document.getElementById("fab-cart-count");
+            fabCartCount?.classList.remove("hidden");
+            if (fabCartCount) fabCartCount.textContent = count.toString();
+        } else {
+            cartCount?.classList.add("hidden");
+            cartBadge?.classList.add("hidden"); // Or remove/hide generic dot too if empty
+            
+            const fabCartCount = document.getElementById("fab-cart-count");
+            fabCartCount?.classList.add("hidden");
+        }
+    });
+
+    // Smart Sticky Header Logic
+    const header = document.getElementById("main-header");
+    const fabCart = document.getElementById("mobile-fab-cart");
+    
+    if (header && header.dataset.smartSticky === 'true') {
+        let lastScrollY = window.scrollY;
+        
+        window.addEventListener("scroll", () => {
+            const currentScrollY = window.scrollY;
+            
+            // Only trigger behavior if we've scrolled past the header height to avoid jitter at top
+            if (currentScrollY > 100) {
+                if (currentScrollY > lastScrollY) {
+                    // Scrolling down - hide header
+                    header.style.transform = "translateY(-100%)";
+                    
+                    // Show FAB Cart drawer handle on right edge
+                    if (fabCart) {
+                        fabCart.classList.remove("translate-x-full", "opacity-0");
+                        fabCart.classList.add("translate-x-0", "opacity-100");
+                    }
+                } else {
+                    // Scrolling up - show header
+                    header.style.transform = "translateY(0)";
+                    
+                    // Hide FAB Cart drawer handle
+                    if (fabCart) {
+                        fabCart.classList.remove("translate-x-0", "opacity-100");
+                        fabCart.classList.add("translate-x-full", "opacity-0");
+                    }
+                }
+            } else {
+                // At the top - ensure header is shown and FAB is hidden
+                header.style.transform = "translateY(0)";
+                if (fabCart) {
+                    fabCart.classList.remove("translate-x-0", "opacity-100");
+                    fabCart.classList.add("translate-x-full", "opacity-0");
+                }
+            }
+            
+            lastScrollY = currentScrollY;
+        }, { passive: true });
+    }
+
+    // FAB Cart click handler
+    fabCart?.addEventListener("click", () => {
+        isCartOpen.set(true);
+    });
+</script>

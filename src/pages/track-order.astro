@@ -1,0 +1,258 @@
+---
+import MainLayout from "../layouts/MainLayout.astro";
+import Icon from "../components/ui/Icon.astro";
+import { getAllSettings } from "../utils/settings";
+
+const db = Astro.locals.runtime?.env?.DB;
+
+let whatsappNumber = "923112390620";
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        if (settings.public_whatsapp_number) {
+            whatsappNumber = settings.public_whatsapp_number;
+        }
+    } catch (e) {
+        console.error("Failed to load settings in Track Order Page", e);
+    }
+}
+
+
+let searchQuery = Astro.url.searchParams.get("q")?.trim() || "";
+// Strip leading hashes if customer pastes #GPK05015
+searchQuery = searchQuery.replace(/^#+/, "");
+let phoneQuery = Astro.url.searchParams.get("phone")?.trim() || "";
+// Clean up phone number (remove spaces, hyphens, and + symbol)
+phoneQuery = phoneQuery.replace(/[\s\-\+]/g, "");
+let errorMsg = "";
+let matchedOrders: any[] = [];
+
+if (searchQuery && phoneQuery && db) {
+    try {
+        // Search by exact ID or Courier Tracking ID, AND verify phone matches
+        const queryStr = `
+            SELECT * FROM orders 
+            WHERE (id = ? OR tracking_no = ?)
+            AND (
+                customer_phone = ? 
+                OR REPLACE(REPLACE(REPLACE(customer_phone, ' ', ''), '-', ''), '+', '') = ?
+            )
+            ORDER BY created_at DESC
+        `;
+        
+        const { results } = await db.prepare(queryStr)
+            .bind(searchQuery, searchQuery, phoneQuery, phoneQuery)
+            .all();
+            
+        matchedOrders = results || [];
+
+        if (matchedOrders.length === 0) {
+            errorMsg = "We couldn't find any orders matching that Order ID / Tracking ID with the provided Phone Number. Please check and try again.";
+        } else if (matchedOrders.length === 1) {
+            // Only 1 order matched, redirect directly to its tracking page
+            return Astro.redirect(`/track-order/${matchedOrders[0].id}/`);
+        }
+    } catch (e: any) {
+        errorMsg = "An error occurred while looking up your order. Please try again later.";
+        console.error("Tracking search error:", e);
+    }
+} else if ((searchQuery || phoneQuery) && db) {
+    // One field filled but not both
+    errorMsg = "Both Order ID / Tracking ID and Phone Number are required to track your order.";
+}
+
+function getStatusBadgeClass(status: string) {
+    switch (status) {
+        case "Pending":
+            return "bg-amber-50 text-amber-700 border-amber-200";
+        case "Confirmed":
+            return "bg-blue-50 text-blue-700 border-blue-200";
+        case "Booked":
+            return "bg-purple-50 text-purple-700 border-purple-200";
+        case "Shipped":
+            return "bg-indigo-50 text-indigo-700 border-indigo-200";
+        case "Delivered":
+            return "bg-emerald-50 text-emerald-700 border-emerald-200";
+        case "Returned":
+            return "bg-rose-50 text-rose-700 border-rose-200";
+        case "Cancelled":
+            return "bg-gray-50 text-gray-700 border-gray-200";
+        default:
+            return "bg-gray-50 text-gray-700 border-gray-200";
+    }
+}
+---
+
+<MainLayout 
+    title="Track Your Order - Dior Sauvage Pakistan" 
+    description="Track your Dior Sauvage 100ml order delivery status in real-time. Enter your Order ID or phone number to view live courier progress."
+>
+    <!-- Background Accents -->
+    <div class="absolute top-0 left-0 right-0 h-[400px] bg-gradient-to-b from-orange-50/50 to-transparent -z-10 pointer-events-none"></div>
+
+    <div class="max-w-4xl mx-auto px-4 py-12 md:py-20">
+        <!-- Header -->
+        <div class="text-center max-w-2xl mx-auto mb-10 md:mb-16">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-orange-100 text-brand-orange uppercase tracking-wider mb-4 shadow-sm">
+                <Icon name="truck" class="w-3.5 h-3.5 animate-pulse" /> Live Order Tracking
+            </span>
+            <h1 class="text-3xl font-extrabold tracking-tight text-gray-900 md:text-4xl">
+                Where is my order?
+            </h1>
+            <p class="mt-4 text-gray-500 text-base md:text-lg font-medium leading-relaxed">
+                Enter your Order ID or the Phone Number used during checkout to track your parcel's live milestone timeline in real-time.
+            </p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-8 items-start">
+            <!-- Search Form Card (col span 2) -->
+            <div class="md:col-span-2 space-y-6">
+                <div class="bg-white p-6 md:p-8 rounded-2xl border border-gray-100 shadow-sm transition-all duration-200 hover:shadow-md">
+                    <form method="GET" class="space-y-4">
+                        <div>
+                            <label for="q" class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2.5">
+                                Order ID or Tracking ID
+                            </label>
+                            <div class="relative rounded-xl shadow-sm">
+                                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                    <Icon name="search" class="w-5 h-5 text-gray-400" />
+                                </div>
+                                <input
+                                    type="text"
+                                    name="q"
+                                    id="q"
+                                    value={searchQuery}
+                                    required
+                                    placeholder="e.g. GPK09055 or SA7535349204"
+                                    class="block w-full pl-11 pr-4 py-3.5 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm font-normal transition-all duration-200"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="phone" class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2.5">
+                                Phone Number (used during checkout)
+                            </label>
+                            <div class="relative rounded-xl shadow-sm">
+                                <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                    <Icon name="phone" class="w-5 h-5 text-gray-400" />
+                                </div>
+                                <input
+                                    type="tel"
+                                    name="phone"
+                                    id="phone"
+                                    value={phoneQuery}
+                                    required
+                                    placeholder="e.g. 03001234567"
+                                    class="block w-full pl-11 pr-4 py-3.5 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm font-normal transition-all duration-200"
+                                />
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            class="w-full sm:w-auto px-6 py-3.5 bg-brand-orange hover:bg-brand-orange/95 text-white font-bold rounded-xl text-sm transition-all duration-150 flex items-center justify-center gap-2 shadow-sm hover:shadow active:scale-[0.98]"
+                        >
+                            Find My Order
+                            <Icon name="arrow-right" class="w-4 h-4" />
+                        </button>
+                    </form>
+
+                    <!-- Error Alert -->
+                    {errorMsg && (
+                        <div class="mt-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                            <div class="text-lg leading-none select-none">⚠️</div>
+                            <div class="text-sm">
+                                <p class="font-bold">No Order Found</p>
+                                <p class="mt-0.5 text-gray-700 font-medium leading-relaxed">{errorMsg}</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <!-- Multiple Matches Table -->
+                {matchedOrders.length > 1 && (
+                    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden animate-fadeIn">
+                        <div class="p-6 border-b border-gray-100 bg-gray-50/50">
+                            <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                <Icon name="package" class="w-5 h-5 text-brand-orange" />
+                                Orders Found ({matchedOrders.length})
+                            </h2>
+                            <p class="text-xs text-gray-500 mt-1 font-semibold">Multiple orders match this phone number. Select one to track:</p>
+                        </div>
+                        <div class="divide-y divide-gray-100">
+                            {matchedOrders.map((order) => {
+                                const placedDate = new Date(order.created_at).toLocaleDateString('en-US', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric'
+                                });
+                                return (
+                                    <div class="p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:bg-gray-50/50 transition-colors">
+                                        <div class="space-y-1">
+                                            <div class="flex items-center gap-2.5">
+                                                <span class="font-bold text-gray-900">Order #{order.id}</span>
+                                                <span class={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${getStatusBadgeClass(order.status)}`}>
+                                                    {order.status}
+                                                </span>
+                                            </div>
+                                            <div class="flex items-center gap-2 text-xs font-semibold text-gray-500">
+                                                <span>Placed on {placedDate}</span>
+                                                <span>•</span>
+                                                <span class="text-gray-750">PKR {order.total_amount.toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                        <a
+                                            href={`/track-order/${order.id}/`}
+                                            class="inline-flex items-center gap-1.5 text-xs font-bold text-brand-orange hover:text-brand-orange/90 transition-colors bg-orange-50 px-3.5 py-2 rounded-lg border border-orange-100 hover:border-orange-200"
+                                        >
+                                            Track Shipment
+                                            <Icon name="arrow-right" class="w-3.5 h-3.5" />
+                                        </a>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            <!-- Help Sidebar -->
+            <div class="space-y-6">
+                <!-- Info Box: Finding ID -->
+                <div class="bg-gray-50/80 backdrop-blur p-6 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                    <h3 class="font-bold text-gray-900 text-sm flex items-center gap-2 uppercase tracking-wider text-xs text-gray-500">
+                        <Icon name="shield" class="w-4 h-4 text-brand-orange" /> Help & Info
+                    </h3>
+                    <div class="space-y-3.5 text-xs text-gray-600 leading-relaxed font-normal">
+                        <div>
+                            <p class="text-gray-900 font-semibold mb-1">Where is my Order ID?</p>
+                            <p>You can find your Order ID (e.g., GPK05001) in the confirmation email or WhatsApp message sent to you right after placing your order.</p>
+                        </div>
+                        <div class="pt-3.5 border-t border-gray-200">
+                            <p class="text-gray-900 font-semibold mb-1">Automatic Tracking ID</p>
+                            <p>Once you confirm your order via WhatsApp, a shipping tracking ID is automatically reserved and attached to your order history.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Support Box -->
+                <div class="bg-brand-orange/5 p-6 rounded-2xl border border-orange-100 shadow-sm space-y-4">
+                    <h4 class="font-bold text-gray-900 text-base">Still Need Help?</h4>
+                    <p class="text-xs text-gray-700 leading-relaxed font-medium">
+                        If you cannot find your Order ID or are facing any issues, contact Dior Sauvage customer support directly on WhatsApp.
+                    </p>
+                    <a
+                        href={`https://wa.me/${whatsappNumber}`} 
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="inline-flex w-full items-center justify-center gap-2 px-4 py-2.5 bg-[#25D366] hover:bg-[#20ba59] text-white font-bold rounded-xl text-xs transition-colors shadow-sm"
+                    >
+                        <Icon name="message-circle" class="w-4 h-4" />
+                        Chat on WhatsApp
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</MainLayout>

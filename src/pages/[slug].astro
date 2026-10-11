@@ -1,0 +1,76 @@
+---
+import ProductDetail from "../components/ProductDetail.astro";
+import ReviewsSection from "../components/ReviewsSection.astro";
+import { singleSauvageProduct } from "../data/product";
+
+const { slug } = Astro.params;
+const db = Astro.locals.runtime?.env?.DB;
+
+// If slug is old gionee product or alias, redirect to dior-sauvage-100ml
+if (slug && slug !== 'dior-sauvage-100ml') {
+    if (slug.includes('gionee') || slug.includes('sauvage') || slug.includes('dior')) {
+        return Astro.redirect('/dior-sauvage-100ml/', 301);
+    }
+}
+
+let dbProduct: any = null;
+let dbPacks: any[] = [];
+let dbReviews: any[] = [];
+
+if (db) {
+    try {
+        dbProduct = await db.prepare("SELECT * FROM products WHERE slug = ?").bind(slug).first();
+        if (dbProduct) {
+            if (dbProduct.status === 'draft') return Astro.redirect('/404');
+            
+            try { dbProduct.images = JSON.parse(dbProduct.images); } catch(e) { dbProduct.images = []; }
+            try { dbProduct.specs = JSON.parse(dbProduct.specs); } catch(e) { dbProduct.specs = []; }
+            try { dbProduct.features = JSON.parse(dbProduct.features); } catch(e) { dbProduct.features = []; }
+            try { dbProduct.compatibility = JSON.parse(dbProduct.compatibility); } catch(e) { dbProduct.compatibility = []; }
+            try { dbProduct.faqs = JSON.parse(dbProduct.faqs); } catch(e) { dbProduct.faqs = []; }
+
+            const packsResult = await db.prepare("SELECT * FROM product_packs WHERE product_id = ? ORDER BY unit_count ASC").bind(dbProduct.id).all();
+            dbPacks = packsResult.results || [];
+
+            const reviewsResult = await db.prepare("SELECT * FROM reviews WHERE product_id = ? AND is_visible = 1 ORDER BY created_at DESC").bind(dbProduct.id).all();
+            dbReviews = reviewsResult.results || [];
+        }
+    } catch (e) {
+        console.error("Failed to query product from D1:", e);
+    }
+}
+
+// Fallback to singleSauvageProduct if database returned empty or wasn't configured
+if (!dbProduct) {
+    if (slug === 'dior-sauvage-100ml') {
+        dbProduct = singleSauvageProduct;
+        dbPacks = singleSauvageProduct.packs;
+        dbReviews = singleSauvageProduct.reviews;
+    } else {
+        return Astro.redirect('/dior-sauvage-100ml/');
+    }
+}
+---
+
+<ProductDetail
+    id={dbProduct.id}
+    title={dbProduct.title}
+    price={dbProduct.base_price || dbProduct.price}
+    originalPrice={dbProduct.original_price || dbProduct.originalPrice}
+    description={dbProduct.description}
+    longDescription={dbProduct.long_description || dbProduct.longDescription}
+    images={dbProduct.images}
+    specs={dbProduct.specs}
+    features={dbProduct.features}
+    compatibility={dbProduct.compatibility}
+    faqs={dbProduct.faqs}
+    metaTitle={dbProduct.meta_title || dbProduct.metaTitle}
+    metaDescription={dbProduct.meta_description || dbProduct.metaDescription}
+    packs={dbPacks && dbPacks.length > 0 ? dbPacks : singleSauvageProduct.packs}
+    reviews={dbReviews && dbReviews.length > 0 ? dbReviews : singleSauvageProduct.reviews}
+    badge={(dbProduct.badge && dbProduct.badge !== "Best Seller") ? dbProduct.badge : "Brand Leftover Lot"}
+    reviewCount={dbProduct.review_count || 1840}
+    rating={dbProduct.rating || 4.9}
+>
+    <ReviewsSection productId={dbProduct.id} reviews={dbReviews && dbReviews.length > 0 ? dbReviews : singleSauvageProduct.reviews} bgClass="bg-slate-50" totalCount={dbProduct.review_count || 1840} rating={dbProduct.rating || 4.9} />
+</ProductDetail>

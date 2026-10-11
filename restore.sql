@@ -1,0 +1,2 @@
+INSERT INTO orders (id, customer_name, customer_phone, customer_email, city, address, delivery_fee, total_amount, status, created_at) VALUES ('5NA54AL', 'Just Enough', '03437297721', '', 'Lahore', 'https://maps.app.goo.gl/3T7ahoNmFJZ9FPfF6', 200, 750, 'Delivered', '2026-05-08T11:06:42.000Z');
+INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity, pack_size_label) VALUES ('5NA54AL', 2, 'Gionee Handsfree Type-C', 550, 1, 'Single');

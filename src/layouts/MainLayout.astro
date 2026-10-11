@@ -1,0 +1,58 @@
+---
+import Layout from "./Layout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+import SchemaController from "../components/schema/SchemaController.astro";
+
+interface Props {
+    title: string;
+    description?: string;
+    image?: string;
+    schema?: object; // Keep for backward compatibility if needed, or remove? Better to keep as custom override.
+    schemaType?:
+        | "home"
+        | "contact"
+        | "about"
+        | "policy"
+        | "blog-index"
+        | "blog-post"
+        | "product"
+        | "default";
+    schemaData?: any;
+}
+
+const {
+    title,
+    description,
+    image,
+    schema,
+    schemaType = "default",
+    schemaData,
+} = Astro.props;
+---
+
+<Layout title={title} description={description} image={image}>
+    <!-- Advanced Schema Controller -->
+    <SchemaController
+        type={schemaType}
+        data={schemaData}
+        title={title}
+        description={description}
+    />
+
+    <!-- Legacy Schema Support (if any specific JSON is passed) -->
+    {
+        schema && (
+            <script
+                type="application/ld+json"
+                set:html={JSON.stringify(schema)}
+                slot="head"
+            />
+        )
+    }
+    <Header />
+    <main class="min-h-screen">
+        <slot />
+    </main>
+    <Footer />
+</Layout>

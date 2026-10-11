@@ -1,0 +1,179 @@
+---
+import Icon from "./ui/Icon.astro";
+import { getAllSettings } from "../utils/settings";
+
+const currentYear = new Date().getFullYear();
+
+const db = Astro.locals.runtime?.env?.DB;
+let whatsappNumber = "923112390620";
+if (db) {
+    try {
+        const settings = await getAllSettings(db);
+        if (settings.public_whatsapp_number) {
+            whatsappNumber = settings.public_whatsapp_number;
+        }
+    } catch (e) {
+        console.error("Failed to load settings in Footer", e);
+    }
+}
+
+const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.substring(2, 5)} ${whatsappNumber.substring(5)}`;
+
+const links = {
+    products: [
+        { label: "Dior Sauvage EDP 100ml", href: "/dior-sauvage-100ml/" },
+        { label: "Duo Pack", href: "/dior-sauvage-100ml/" },
+        { label: "Trio Pack", href: "/dior-sauvage-100ml/" },
+    ],
+    support: [
+        { label: "Track Your Order", href: "/track-order/" },
+        { label: "FAQs", href: "/faq/" },
+        { label: "Check Warranty & COD", href: "/refund-return-policy/" },
+        { label: "Fragrance Care", href: "/support/" },
+    ],
+    company: [
+        { label: "About Us", href: "/about/" },
+        { label: "Contact Us", href: "/contact/" },
+        { label: "Terms of Service", href: "/terms/" },
+        { label: "Privacy Policy", href: "/privacy-policy/" },
+        { label: "Refund Policy", href: "/refund-return-policy/" },
+    ],
+};
+---
+
+<footer class="bg-white border-t border-gray-200 pt-16 pb-8 text-gray-700">
+    <div class="container mx-auto px-4 max-w-6xl">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-12">
+            {/* Brand */}
+            <div>
+                <a href="/" class="block mb-4">
+                    <img
+                        src="/logo.png"
+                        alt="Dior Pakistan"
+                        width="180"
+                        height="90"
+                        class="h-10 sm:h-11 w-auto opacity-95 hover:opacity-100 transition-all object-contain"
+                    />
+                </a>
+                <p class="text-sm text-gray-600 mb-6 leading-relaxed">
+                    Pakistan's dedicated source for 100% authentic Christian Dior Sauvage Eau de Parfum. Delivered with verifiable batch codes and Cash on Delivery checking warranty.
+                </p>
+                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-semibold text-emerald-800">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    100% Authentic Guaranteed
+                </div>
+            </div>
+
+            {/* Products */}
+            <div>
+                <h3 class="font-bold text-gray-900 tracking-wider uppercase text-xs mb-4">Products</h3>
+                <ul class="space-y-3">
+                    {
+                        links.products.map((link) => (
+                            <li>
+                                <a
+                                    href={link.href}
+                                    class="text-sm text-gray-600 hover:text-[#02274F] transition-colors font-medium"
+                                >
+                                    {link.label}
+                                </a>
+                            </li>
+                        ))
+                    }
+                </ul>
+            </div>
+
+            {/* Support */}
+            <div>
+                <h3 class="font-bold text-gray-900 tracking-wider uppercase text-xs mb-4">Authenticity & Help</h3>
+                <ul class="space-y-3">
+                    {
+                        links.support.map((link) => (
+                            <li>
+                                <a
+                                    href={link.href}
+                                    class="text-sm text-gray-600 hover:text-[#02274F] transition-colors font-medium"
+                                >
+                                    {link.label}
+                                </a>
+                            </li>
+                        ))
+                    }
+                </ul>
+            </div>
+
+            {/* Contact */}
+            <div>
+                <h3 class="font-bold text-gray-900 tracking-wider uppercase text-xs mb-4">Customer Care</h3>
+                <ul class="space-y-4">
+                    <li class="flex items-start gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-[#02274F] shrink-0 mt-0.5">
+                            <Icon
+                                name="phone"
+                                class="w-4 h-4 text-[#02274F]"
+                            />
+                        </div>
+                        <div class="text-sm text-gray-700">
+                            <span class="block text-gray-900 font-semibold">WhatsApp Support</span>
+                            <a
+                                href={`https://wa.me/${whatsappNumber}?text=Hello%20Sauvage%20Dior%20Pakistan.`}
+                                class="text-gray-600 hover:text-[#02274F] transition-colors"
+                            >
+                                {formattedWhatsapp}
+                            </a>
+                        </div>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-[#02274F] shrink-0 mt-0.5">
+                            <Icon
+                                name="mail"
+                                class="w-4 h-4 text-[#02274F]"
+                            />
+                        </div>
+                        <div class="text-sm text-gray-700">
+                            <span class="block text-gray-900 font-semibold">Email Assistance</span>
+                            <a
+                                href="mailto:support@sauvagedior.pk"
+                                class="text-gray-600 hover:text-[#02274F] transition-colors"
+                            >
+                                support@sauvagedior.pk
+                            </a>
+                        </div>
+                    </li>
+                    <li class="pt-2">
+                        <a
+                            href="/contact/"
+                            class="text-[#02274F] font-semibold hover:text-[#011d3b] transition-colors flex items-center gap-1.5 text-sm"
+                        >
+                            Contact Page <Icon
+                                name="arrow-right"
+                                class="w-4 h-4 text-[#02274F]"
+                            />
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <div
+            class="border-t border-gray-200 pt-8 grid grid-cols-1 md:grid-cols-3 gap-4 items-center text-sm text-gray-500"
+        >
+            <div class="text-center md:text-left">
+                Authentic Dior Sauvage Fragrances Pakistan.
+            </div>
+            <div class="text-center">
+                &copy; {currentYear} Dior Sauvage Pakistan. All rights reserved.
+            </div>
+            <div class="flex justify-center md:justify-end gap-6">
+                <a
+                    href="/terms/"
+                    class="text-gray-500 hover:text-[#02274F] transition-colors">Terms</a
+                >
+                <a
+                    href="/privacy-policy/"
+                    class="text-gray-500 hover:text-[#02274F] transition-colors">Privacy</a
+                >
+            </div>
+        </div>
+    </div>
+</footer>

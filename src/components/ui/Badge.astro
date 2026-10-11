@@ -1,0 +1,24 @@
+---
+interface Props {
+    variant?: "default" | "sale" | "outline" | "success";
+    class?: string;
+}
+
+const { variant = "default", class: className } = Astro.props;
+
+const baseStyles =
+    "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2";
+
+const variants = {
+    default: "bg-gray-100 text-gray-900 hover:bg-gray-200/80",
+    sale: "bg-[#02274F]/10 text-[#02274F] border-[#02274F]/25 border font-semibold",
+    success: "bg-green-100 text-green-700 border-green-200 border",
+    outline: "text-gray-900 border border-gray-300",
+};
+
+const styles = [baseStyles, variants[variant], className].join(" ");
+---
+
+<div class={styles}>
+    <slot />
+</div>
