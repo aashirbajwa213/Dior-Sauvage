@@ -4,5 +4,5 @@ compatibility_date = "2024-04-03"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "gionee-v2-test"
-database_id = "2d5bd32f-d0fe-4b86-8352-2fd9737a45f4"
+database_name = "sauvage-dior-db"
+database_id = "8fb13a80-e369-4602-9007-c1eed1e11691"

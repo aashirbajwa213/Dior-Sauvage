@@ -40,6 +40,8 @@ gionee-frontend/
 # private token directories
 *Token*/
 Media/
+cf-token.txt
+scripts/setup_dior_db.cjs
 
 # database dumps & logs
 *.sql
