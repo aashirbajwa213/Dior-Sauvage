@@ -224,7 +224,7 @@ if (!db) {
                         </tr>
                     ) : (
                         products.map((prod) => {
-                            let firstImage = "/favicon.svg";
+                            let firstImage = "/favicon.png";
                             try {
                                 const parsed = JSON.parse(prod.images);
                                 if (Array.isArray(parsed) && parsed.length > 0) {
