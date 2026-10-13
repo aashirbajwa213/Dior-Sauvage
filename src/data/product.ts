@@ -50,10 +50,10 @@ export const singleSauvageProduct: ProductType = {
     rating: 4.9,
     review_count: 1840,
     badge: "Brand Leftover Lot",
-    description: "Direct Brand Leftover Lot: Experience the identical scent profile, beast-mode projection, and 12+ hours monster longevity of Dior Sauvage Eau de Parfum 100ml. Sourced from brand leftover surplus stock lots with signature weighted magnetic cap bottle, offered at direct surplus pricing with Free Express Delivery, Cash on Delivery and Open Parcel Checking Warranty across Pakistan.",
-    long_description: `<p>Unleash the magnetic power of <strong>Dior Sauvage Eau de Parfum 100ml</strong> sourced from our exclusive <strong>Brand Leftover Stock Lot</strong>. Sourced in surplus inventory to deliver the exact same intoxicating sillage, monster projection, and 12+ hours lasting power as the retail showroom bottle at an honest, accessible price.</p><p>Opening with the crisp, zesty burst of sun-drenched Calabrian Bergamot, it transitions into an intoxicating heart of Sichuan Pepper, Star Anise, and Lavender, settling into a rich, lingering trail of Ambroxan and smoky Papua New Guinean Vanilla.</p><h3 class="text-base font-bold text-gray-900 mt-4 mb-2">Why Our Brand Leftover Lot Stands Out</h3><ul class="list-disc list-inside space-y-1 text-gray-600"><li><strong>Brand Leftover Stock Lot:</strong> Sourced in bulk surplus inventory without boutique showroom overheads, giving you the same prestigious scent at direct lot prices.</li><li><strong>1:1 Lasting & Projection:</strong> Rich Eau de Parfum oil concentration delivering 12+ hours beast-mode projection and sillage identical to the original.</li><li><strong>Signature Magnetic Cap:</strong> Heavy luxury glass bottle with iconic magnetic click cap and micro-fine precision atomizer spray.</li><li><strong>Inspection On Arrival (COD):</strong> Order with total peace of mind with 100% Free Delivery, Cash on Delivery and Open Parcel Check Warranty in Pakistan.</li></ul>`,
+    description: "Direct Brand Leftover Lot: Experience the identical scent profile, beast-mode projection, and 12+ hours monster longevity of Dior Sauvage Eau de Parfum 100ml. Sourced from brand leftover surplus stock lots with signature weighted magnetic cap bottle, offered at direct surplus pricing with Free Express Delivery, Cash on Delivery, and 48-Hour Transit Damage Protection across Pakistan.",
+    long_description: `<p>Unleash the magnetic power of <strong>Dior Sauvage Eau de Parfum 100ml</strong> sourced from our exclusive <strong>Brand Leftover Stock Lot</strong>. Sourced in surplus inventory to deliver the exact same intoxicating sillage, monster projection, and 12+ hours lasting power as the retail showroom bottle at an honest, accessible price.</p><p>Opening with the crisp, zesty burst of sun-drenched Calabrian Bergamot, it transitions into an intoxicating heart of Sichuan Pepper, Star Anise, and Lavender, settling into a rich, lingering trail of Ambroxan and smoky Papua New Guinean Vanilla.</p><h3 class="text-base font-bold text-gray-900 mt-4 mb-2">Why Our Brand Leftover Lot Stands Out</h3><ul class="list-disc list-inside space-y-1 text-gray-600"><li><strong>Brand Leftover Stock Lot:</strong> Sourced in bulk surplus inventory without boutique showroom overheads, giving you the same prestigious scent at direct lot prices.</li><li><strong>1:1 Lasting & Projection:</strong> Rich Eau de Parfum oil concentration delivering 12+ hours beast-mode projection and sillage identical to the original.</li><li><strong>Signature Magnetic Cap:</strong> Heavy luxury glass bottle with iconic magnetic click cap and micro-fine precision atomizer spray.</li><li><strong>Transit Damage Protection:</strong> Order with total peace of mind with 100% Free Delivery, Cash on Delivery, and 48-Hour Transit Damage & Leakage Replacement Guarantee.</li></ul>`,
     meta_title: "Dior Sauvage 100ml Price in Pakistan | Brand Leftover Lot EDP Fragrance",
-    meta_description: "Buy Dior Sauvage Eau de Parfum 100ml in Pakistan for Rs. 4,599 with Free Delivery. Identical 12+ hours monster lasting, projection, and Cash on Delivery with open parcel check warranty.",
+    meta_description: "Buy Dior Sauvage Eau de Parfum 100ml in Pakistan for Rs. 4,599 with Free Delivery. Identical 12+ hours monster lasting, projection, Cash on Delivery & 48-Hour Transit Damage Protection.",
     images: [
         "/images/sauvage-dior/Primary-Photo.jpg",
         "/images/sauvage-dior/2nd-image.jpg",
@@ -74,14 +74,14 @@ export const singleSauvageProduct: ProductType = {
         { label: "Base Notes", value: "Ambroxan, Papua New Guinean Vanilla, Cedarwood" },
         { label: "Longevity", value: "10 - 14+ Hours (All Day & Night)" },
         { label: "Quality Grade", value: "1:1 Scent Profile & Monster Sillage" },
-        { label: "Warranty", value: "Open Parcel Check on Delivery (COD)" },
+        { label: "Warranty", value: "48-Hour Transit Damage Replacement" },
         { label: "Cap Type", value: "Magnetic Snap Click Cap" }
     ],
     features: [
         { title: "Brand Leftover Lot (1:1 Quality)", description: "Premium surplus lot delivering the identical scent formulation, sillage, and magnetic cap bottle." },
         { title: "12+ Hours Monster Longevity", description: "Rich EDP concentration delivering captivating sillage and all-day projection identical to retail." },
         { title: "Calabrian Bergamot & Amber", description: "Radiant burst of fresh citrus intertwined with sensual vanilla absolute and ambroxan." },
-        { title: "Open Parcel Check Warranty", description: "Inspect your bottle upon arrival before paying Cash on Delivery across Pakistan." }
+        { title: "48-Hour Transit Protection", description: "Full free replacement if damaged or leaking in transit across Pakistan." }
     ],
     compatibility: [
         "All Weather & Four-Season Wear",
@@ -100,8 +100,8 @@ export const singleSauvageProduct: ProductType = {
             answer: "Yes! It features the identical scent oil concentration with Calabrian bergamot, Sichuan pepper, and ambroxan, delivering 12+ hours of monster longevity and powerful sillage."
         },
         {
-            question: "Can I open and check the parcel before paying?",
-            answer: "Absolutely. We provide an Open Parcel Checking Warranty on Cash on Delivery across Pakistan. You can inspect the bottle upon delivery before handing over payment to the courier rider."
+            question: "What is the policy for delivery inspection and transit safety?",
+            answer: "Courier services deliver parcels sealed for security. To ensure total peace of mind, we provide a 48-Hour Transit Damage & Leakage Guarantee: if your bottle is damaged or leaks during transit, simply share an unboxing video on WhatsApp for an immediate free replacement."
         },
         {
             question: "How long does the fragrance last after spraying?",
@@ -112,8 +112,8 @@ export const singleSauvageProduct: ProductType = {
             answer: "Delivery is 100% FREE nationwide across Pakistan via TCS and Leopards Courier within 2 to 3 working days."
         },
         {
-            question: "What is your return and exchange policy?",
-            answer: "We offer a 7-day hassle-free exchange and money-back guarantee if the item arrives damaged or fails to meet quality standards."
+            question: "What is your return and exchange policy for lot stock?",
+            answer: "Because this is brand leftover lot inventory offered at liquidation pricing, items cannot be returned for change of mind or fragrance preference once unsealed or sprayed. However, any transit damage, leakage, or defect reported within 48 hours with an unboxing video is 100% covered by our free replacement guarantee."
         }
     ],
     packs: [
@@ -177,7 +177,7 @@ export const singleSauvageProduct: ProductType = {
             product_id: 1,
             rating: 4.8,
             title: "Unbelievable Monster Lasting & Magnetic Cap!",
-            text: "Hands down the best fragrance deal in Pakistan! Scent is 100% identical to the retail bottle, beast-mode projection, and verified open parcel before paying TCS rider.",
+            text: "Hands down the best fragrance deal in Pakistan! Scent is 100% identical to the retail bottle, beast-mode projection, and safe delivery with full transit damage guarantee.",
             author: "Zohaib Hassan",
             location: "Multan, Cantt",
             is_visible: 1

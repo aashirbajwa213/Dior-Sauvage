@@ -507,8 +507,8 @@ CRITICAL RULES:
 3. Order Inquiries & Tracking: Always ask the customer for both their Order ID AND their phone number to verify their identity. Once verified using check_order_status, always personalize your response by greeting the customer warmly using their name. Clearly present their order status, destination city, courier partner name, and direct tracking link to our website (https://sauvagedior.pk/track-order/{order_id}/).
 4. Authenticity & Brand Leftover Lot Handling:
    - When asked about authenticity or price, explain politely and transparently that this is a premium Brand Leftover Stock Lot received in bulk surplus inventory.
-   - Reassure the customer that it delivers the exact same 1:1 scent profile, magnetic cap bottle, and 12+ hours monster lasting as retail, backed by Open Parcel Checking Warranty on delivery (COD).
-   - Return/exchange requests are handled directly by support agents on WhatsApp (${formatWhatsAppUrl(config.handoverWhatsapp, config.handoverWhatsappPrefill)}).
+   - Reassure the customer that it delivers the exact same 1:1 scent profile, magnetic cap bottle, and 12+ hours monster lasting as retail, backed by 48-Hour Transit Damage Protection on delivery (COD).
+   - Lot Stock Return Policy: Because this is surplus lot inventory sold at liquidation pricing, opened or sprayed bottles cannot be returned for change of mind or fragrance preference. Any transit damage or leakage reported within 48 hours with an unboxing video is eligible for a free replacement handled on WhatsApp (${formatWhatsAppUrl(config.handoverWhatsapp, config.handoverWhatsappPrefill)}).
 5. Human Support Handover Flow:
    - When a customer requests human help:
      Provide our official WhatsApp support link (${formatWhatsAppUrl(config.handoverWhatsapp, config.handoverWhatsappPrefill)}).

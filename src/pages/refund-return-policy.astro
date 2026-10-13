@@ -7,7 +7,7 @@ import { getAllSettings } from "../utils/settings";
 
 const seoTitle = "Refund and Return Policy | Dior Sauvage Pakistan";
 const seoDescription =
-    "Our authentic luxury perfume refund and return policy. Learn about our Open Parcel Checking Warranty and 7-day replacement guarantee.";
+    "Official Return & Replacement Policy for Brand Leftover Lot Fragrances. 48-Hour Transit Damage & Leakage Replacement Guarantee.";
 
 const db = Astro.locals.runtime?.env?.DB;
 let whatsappNumber = "923112390620";
@@ -25,67 +25,50 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
 <MainLayout title={seoTitle} description={seoDescription} schemaType="policy">
     <PageHeader
         title="Refund & Returns Policy"
-        tagline="100% Transparency and Customer Security for Luxury Fragrance Purchases."
+        tagline="Clear, Transparent Guidelines for Our Brand Leftover Lot Fragrances."
     />
 
     <div class="container mx-auto px-4 max-w-4xl py-16">
         <div
             class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 md:p-12 space-y-12"
         >
-            {/* Introduction */}
+            {/* Notice Banner */}
             <div>
                 <div
-                    class="bg-blue-50 border-l-4 border-blue-500 p-6 rounded-r-lg mb-8"
+                    class="bg-amber-50 border-l-4 border-amber-500 p-6 rounded-r-lg mb-8"
                 >
                     <div class="flex items-start gap-3">
                         <Icon
-                            name="check"
-                            class="w-6 h-6 text-blue-500 shrink-0 mt-1"
+                            name="shield"
+                            class="w-6 h-6 text-amber-600 shrink-0 mt-1"
                         />
                         <div>
                             <h3 class="font-bold text-gray-900 mb-1">
-                                Strict Quality Assurance Before Dispatch
+                                Brand Leftover Lot — Final Sale & Hygiene Policy
                             </h3>
-                            <p class="text-gray-700 text-sm">
-                                Every single fragrance shipment is inspected by our fulfillment team prior to sealing. We specifically check:
+                            <p class="text-gray-700 text-sm leading-relaxed">
+                                Our perfumes are sourced directly from brand leftover surplus stock lots and offered at direct liquidation pricing. Fragrances are intimate personal care products; once opened or sprayed, bottles cannot be restocked or returned. Please review our comprehensive policy below.
                             </p>
-                            <ul
-                                class="list-disc list-inside mt-2 text-sm text-gray-600"
-                            >
-                                <li>
-                                    <strong>Cellophane & Seals:</strong> Intact factory cellophane wrapping with crisp fold seams.
-                                </li>
-                                <li>
-                                    <strong>Batch Code Alignment:</strong> Crisp 4-digit code stamped clearly on the outer box.
-                                </li>
-                                <li>
-                                    <strong>Bubble Armor Packaging:</strong> Multi-layer shock-absorbent cushioning to protect the glass bottle in transit.
-                                </li>
-                            </ul>
                         </div>
                     </div>
                 </div>
 
                 <h2 class="text-2xl font-bold text-gray-900 mb-4">
-                    1. Open Parcel Checking Warranty (Test on Arrival)
+                    1. Brand Leftover Lot & Hygiene Standard
                 </h2>
-                <div class="prose prose-slate max-w-none text-gray-600">
+                <div class="prose prose-slate max-w-none text-gray-600 space-y-3">
                     <p>
-                        At SauvageDior.pk, we believe our customers deserve complete confidence when investing in a signature luxury fragrance. We provide an <strong
-                            >Open Parcel Checking Warranty</strong
-                        > with Cash on Delivery.
+                        At SauvageDior.pk, we pride ourselves on absolute honesty and transparency. Because our catalog consists of imported brand leftover surplus lots offered at up to 75% below retail boutique prices:
                     </p>
-                    <p>
-                        <strong>What this means:</strong> You are encouraged to inspect the outer package and verify the product condition with the courier rider upon delivery.
-                    </p>
-                    <ul
-                        class="list-disc list-inside bg-slate-50 p-6 rounded-lg border border-slate-200 my-6"
-                    >
-                        <li class="mb-2">
-                            <strong>Transit Protection:</strong> In the rare event of transit breakage or leakage, you can refuse the parcel immediately and request a priority replacement.
+                    <ul class="list-disc list-inside bg-slate-50 p-6 rounded-lg border border-slate-200 my-4 space-y-2 text-sm text-gray-700">
+                        <li>
+                            <strong>Personal Care & Hygiene:</strong> Under international cosmetic safety standards, perfumes cannot be returned or refunded once unsealed, opened, or sprayed.
                         </li>
                         <li>
-                            <strong>Authenticity Assurance:</strong> You can cross-verify the printed batch code on CheckFresh.com to confirm production authenticity.
+                            <strong>No Returns for Change of Mind or Fragrance Preference:</strong> Scent perception is highly personal and varies by individual skin chemistry. Disliking a fragrance note or changing your mind is not eligible for return or cash refund.
+                        </li>
+                        <li>
+                            <strong>Replacement Only (No Cash Refunds):</strong> In all eligible defect or damage cases, we provide a brand new replacement bottle. We do not issue cash or bank refunds on lot stock.
                         </li>
                     </ul>
                 </div>
@@ -93,28 +76,85 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
 
             <hr class="border-gray-100" />
 
-            {/* 7-Day Exchange Policy */}
+            {/* 48-Hour Transit Damage Protection */}
             <div>
                 <h2 class="text-2xl font-bold text-gray-900 mb-4">
-                    2. 7-Day Replacement & Return Window
+                    2. 48-Hour Transit Damage & Defect Protection
                 </h2>
-                <p class="text-gray-600 mb-4">
-                    If you identify any manufacturing defect with the atomizer nozzle or package discrepancy within 7 days of delivery:
+                <p class="text-gray-600 mb-4 leading-relaxed">
+                    Every shipment is packaged in multi-layer bubble armor before dispatch. However, in the rare event of damage during courier handling, your order is 100% protected with our <strong>48-Hour Free Replacement Guarantee</strong>.
                 </p>
+
                 <div class="grid sm:grid-cols-2 gap-4 my-6">
-                    <div class="border border-gray-200 p-4 rounded-xl">
-                        <div class="font-bold text-gray-900 mb-1">Step 1: Contact WhatsApp</div>
-                        <p class="text-sm text-gray-600">Message our customer team at {formattedWhatsapp} with your Order ID and photo of the issue.</p>
+                    <div class="border border-emerald-200 bg-emerald-50/50 p-5 rounded-xl">
+                        <div class="font-bold text-emerald-900 mb-2 flex items-center gap-2">
+                            <span class="text-emerald-600">✓</span> What Is Covered (Free Replacement)
+                        </div>
+                        <ul class="text-xs text-gray-700 space-y-1.5 list-disc list-inside">
+                            <li>Bottle broken or cracked during transit.</li>
+                            <li>Visible liquid leakage inside packaging upon arrival.</li>
+                            <li>Defective atomizer spray nozzle that does not dispense.</li>
+                            <li>Incorrect item or bundle delivered (e.g. ordered Trio, received Single).</li>
+                        </ul>
                     </div>
-                    <div class="border border-gray-200 p-4 rounded-xl">
-                        <div class="font-bold text-gray-900 mb-1">Step 2: Instant Replacement</div>
-                        <p class="text-sm text-gray-600">We dispatch a fresh replacement unit within 24 hours via express courier.</p>
+
+                    <div class="border border-rose-200 bg-rose-50/50 p-5 rounded-xl">
+                        <div class="font-bold text-rose-900 mb-2 flex items-center gap-2">
+                            <span class="text-rose-600">✕</span> What Is Not Covered
+                        </div>
+                        <ul class="text-xs text-gray-700 space-y-1.5 list-disc list-inside">
+                            <li>Bottles that have been used, sprayed, or tested.</li>
+                            <li>Subjective scent preference or performance feedback.</li>
+                            <li>Claims submitted after 48 hours of parcel delivery.</li>
+                            <li>Normal surplus lot outer packaging or shelf-wear handling marks.</li>
+                        </ul>
                     </div>
                 </div>
             </div>
 
+            <hr class="border-gray-100" />
+
+            {/* Claim Procedure */}
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900 mb-4">
+                    3. How to Claim a Free Replacement (Unboxing Video)
+                </h2>
+                <p class="text-gray-600 mb-4 leading-relaxed">
+                    To prevent fraudulent claims and ensure fast approval, please follow this mandatory 3-step process:
+                </p>
+                <div class="grid sm:grid-cols-3 gap-4 my-6">
+                    <div class="border border-gray-200 p-5 rounded-xl bg-gray-50/60">
+                        <div class="text-brand-orange font-mono font-bold text-lg mb-1">01</div>
+                        <div class="font-bold text-gray-900 mb-1 text-sm">Record Unboxing Video</div>
+                        <p class="text-xs text-gray-600 leading-relaxed">Record a clear, uncut video while opening the courier flyer and bubble packaging showing any transit damage or leakage.</p>
+                    </div>
+                    <div class="border border-gray-200 p-5 rounded-xl bg-gray-50/60">
+                        <div class="text-brand-orange font-mono font-bold text-lg mb-1">02</div>
+                        <div class="font-bold text-gray-900 mb-1 text-sm">WhatsApp Within 48h</div>
+                        <p class="text-xs text-gray-600 leading-relaxed">Share your Order ID along with the unboxing video and photos with our support team on WhatsApp at {formattedWhatsapp}.</p>
+                    </div>
+                    <div class="border border-gray-200 p-5 rounded-xl bg-gray-50/60">
+                        <div class="text-brand-orange font-mono font-bold text-lg mb-1">03</div>
+                        <div class="font-bold text-gray-900 mb-1 text-sm">Free Replacement Sent</div>
+                        <p class="text-xs text-gray-600 leading-relaxed">Once verified by our fulfillment team, a brand new replacement bottle is dispatched via express courier with zero extra charges.</p>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="border-gray-100" />
+
+            {/* Courier Delivery & COD Policy */}
+            <div>
+                <h2 class="text-2xl font-bold text-gray-900 mb-3">
+                    4. Cash on Delivery (COD) Inspection Note
+                </h2>
+                <p class="text-gray-600 text-sm leading-relaxed mb-4">
+                    In Pakistan, courier logistics partners (TCS, Leopards, Trax, PostEx) operate under standard sealed-transit regulations, which do not permit opening or testing liquid products prior to payment collection. Your purchase is fully safeguarded by our <strong>48-Hour Transit Damage & Leakage Guarantee</strong> directly with our brand store immediately upon delivery.
+                </p>
+            </div>
+
             <div class="pt-6 border-t border-gray-100 text-center">
-                <Button href="/contact/" size="lg">Contact Fragrance Support</Button>
+                <Button href={`https://wa.me/${whatsappNumber}`} size="lg">Contact Helpline on WhatsApp</Button>
             </div>
         </div>
     </div>
