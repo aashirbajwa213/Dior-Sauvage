@@ -275,7 +275,13 @@ const seoTitle = "Business Intelligence - Dior Sauvage Pakistan";
             <p class="text-emerald-100 text-xs font-semibold uppercase tracking-wider mb-2">True Net Profit</p>
             <h2 class="text-3xl font-bold tracking-tight mb-1">PKR {Math.round(kpis.net_profit).toLocaleString()}</h2>
             <div class="flex items-center gap-2 mt-4 text-sm">
-                <span class={`font-medium px-2 py-0.5 rounded ${kpis.profit_margin >= 20 ? 'bg-emerald-500/30 text-emerald-100' : 'bg-red-500/40 text-rose-100'}`}>
+                <span class={`font-medium px-2.5 py-1 rounded-lg text-xs backdrop-blur-sm ${
+                    kpis.gross_revenue === 0 
+                        ? 'bg-white/15 text-emerald-100 border border-white/20' 
+                        : kpis.profit_margin >= 20 
+                            ? 'bg-emerald-400/25 text-emerald-100 border border-emerald-400/30' 
+                            : 'bg-rose-500/30 text-rose-100 border border-rose-400/30'
+                }`}>
                     {kpis.profit_margin.toFixed(1)}% Margin
                 </span>
             </div>
