@@ -1,7 +1,7 @@
 ---
 import { Image, getImage } from "astro:assets";
-import heroImage from "../assets/hero.png";
-const optimizedHero = await getImage({ src: heroImage, format: "webp", widths: [400, heroImage.width] });
+import heroImage from "../assets/hero.webp";
+const optimizedHero = await getImage({ src: heroImage, format: "webp", widths: [400, 800, heroImage.width] });
 import MainLayout from "../layouts/MainLayout.astro";
 import ProductCard from "../components/ProductCard.astro";
 import Button from "../components/ui/Button.astro";

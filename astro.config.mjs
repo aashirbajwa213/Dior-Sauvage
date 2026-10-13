@@ -14,13 +14,17 @@ export default defineConfig({
     host: true,
     port: 4321
   },
-  site: 'https://sauvagedior.pk/',
+  site: 'https://diorsauvage.pk/',
   trailingSlash: 'always',
   output: 'server',
   image: {
+    service: {
+      entrypoint: 'astro/assets/services/sharp'
+    },
     domains: ["media.sauvagedior.pk", "cdn.sauvagedior.pk"],
   },
   adapter: cloudflare({
+    imageService: 'compile',
     platformProxy: {
       enabled: true,
     },
