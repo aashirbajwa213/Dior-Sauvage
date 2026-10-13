@@ -393,7 +393,7 @@ export const server = {
       `).join('');
 
             const adminEmailPayload = {
-                from: 'Dior Sauvage Orders <orders@sauvagedior.pk>',
+                from: 'Dior Sauvage Orders <contact@diorsauvage.pk>',
                 to: ADMIN_EMAILS,
                 subject: `New Order: #${orderId} - ${input.customer.name}`,
                 html: `
@@ -421,32 +421,33 @@ export const server = {
           
           <div style="margin-top: 20px; text-align: right;">
             <p><strong>Delivery Fee:</strong> PKR ${input.deliveryFee.toLocaleString()}</p>
-            <p style="font-size: 1.25rem; color: #ff6b00;"><strong>Total Amount:</strong> PKR ${input.total.toLocaleString()}</p>
+            <p style="font-size: 1.25rem; color: #02274F;"><strong>Total Amount:</strong> PKR ${input.total.toLocaleString()}</p>
           </div>
         `,
             };
-            const adminEmail = await resend.emails.send(adminEmailPayload);
 
-            if (db) {
-                try {
-                    await db.prepare(`
-                        INSERT INTO resend_email_logs (type, order_id, recipient, subject, payload, response, error) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    `).bind(
-                        "Admin Alert", `#${orderId}`, ADMIN_EMAILS.join(", "), adminEmailPayload.subject, 
-                        JSON.stringify(adminEmailPayload), 
-                        adminEmail.data ? JSON.stringify(adminEmail.data) : null, 
-                        adminEmail.error ? JSON.stringify(adminEmail.error) : null
-                    ).run();
-                } catch(e) { console.error("Failed to log admin email", e); }
-            }
+            try {
+                const adminEmail = await resend.emails.send(adminEmailPayload);
 
+                if (db) {
+                    try {
+                        await db.prepare(`
+                            INSERT INTO resend_email_logs (type, order_id, recipient, subject, payload, response, error) 
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        `).bind(
+                            "Admin Alert", `#${orderId}`, ADMIN_EMAILS.join(", "), adminEmailPayload.subject, 
+                            JSON.stringify(adminEmailPayload), 
+                            adminEmail.data ? JSON.stringify(adminEmail.data) : null, 
+                            adminEmail.error ? JSON.stringify(adminEmail.error) : null
+                        ).run();
+                    } catch(e) { console.error("Failed to log admin email", e); }
+                }
 
-            if (adminEmail.error) {
-                throw new ActionError({
-                    code: 'BAD_REQUEST',
-                    message: adminEmail.error.message,
-                });
+                if (adminEmail.error) {
+                    console.error("Admin order email warning:", adminEmail.error.message);
+                }
+            } catch (emailErr: any) {
+                console.error("Non-fatal admin order notification error:", emailErr?.message);
             }
 
             // 2. Send Customer Email (if email exists and enabled)
@@ -562,12 +563,14 @@ export const server = {
                     .replace(/923112390620/g, whatsappNumber);
 
                 const customerPayload = {
-                    from: sender,
+                    from: sender.includes('@diorsauvage.pk') ? sender : 'Dior Sauvage <contact@diorsauvage.pk>',
                     to: [input.customer.email],
                     subject: subject,
                     html: emailHtml,
                 };
-                const customerEmailResult = await resend.emails.send(customerPayload);
+                
+                try {
+                    const customerEmailResult = await resend.emails.send(customerPayload);
 
                     if (db) {
                         try {
@@ -582,7 +585,10 @@ export const server = {
                             ).run();
                         } catch(e) { console.error("Failed to log customer email", e); }
                     }
+                } catch (customerEmailErr: any) {
+                    console.error("Non-fatal customer confirmation email error:", customerEmailErr?.message);
                 }
+            }
             }
 
             return { ...adminEmail.data, orderId };
