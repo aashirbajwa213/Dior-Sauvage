@@ -16,6 +16,7 @@ interface Props {
     href: string;
     badge?: string;
     isNew?: boolean;
+    class?: string;
     packs?: {
         id: number;
         product_id: number;
@@ -26,7 +27,7 @@ interface Props {
     }[];
 }
 
-const { id, title, price, originalPrice, rating, reviewCount, image, href, badge, packs = [] } =
+const { id, title, price, originalPrice, rating, reviewCount, image, href, badge, packs = [], class: className = "" } =
     Astro.props;
 
 const computedPacks = packs.length > 0 ? packs : [
@@ -46,7 +47,7 @@ const imageMeta = images[imagePath]?.default;
 ---
 
 <div
-    class="group block bg-white rounded-xl border border-gray-100 hover:border-gray-200 shadow-sm hover:shadow-md transition-all duration-300"
+    class={`group block bg-white rounded-xl border border-gray-200 hover:border-gray-300 shadow-sm hover:shadow-md transition-all duration-300 ${className}`}
 >
     <a
         href={href}

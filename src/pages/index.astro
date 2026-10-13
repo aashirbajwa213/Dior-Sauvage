@@ -348,7 +348,7 @@ const homepageReviews = [
 			</div>
 
 			<div class="max-w-md mx-auto">
-				<div class="shadow-xl rounded-2xl overflow-hidden border border-slate-100">
+				<div class="shadow-xl rounded-2xl overflow-hidden border border-gray-200">
 					<ProductCard
 						id={product.id}
 						title="Dior Sauvage Eau De Parfum - Eau De Toilette - 100ml"
@@ -360,6 +360,7 @@ const homepageReviews = [
 						href={product.slug.startsWith('/') ? product.slug : `/${product.slug}/`}
 						badge="Brand Leftover Lot"
 						packs={product.packs && product.packs.length > 0 ? product.packs : singleSauvageProduct.packs}
+						class="border-0 shadow-none rounded-none"
 					/>
 				</div>
 			</div>
