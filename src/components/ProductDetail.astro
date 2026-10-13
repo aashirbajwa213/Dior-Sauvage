@@ -281,86 +281,100 @@ if (db) {
                     
                     <div class="grid grid-cols-3 gap-2">
                         {
-                            (packs.length > 0 ? packs : [
-                                { id: -1, pack_label: "Single Pack", unit_count: 1, pack_price: price, free_shipping: 1 },
-                                { id: -2, pack_label: "Duo Pack", unit_count: 2, pack_price: 8499, free_shipping: 1 },
-                                { id: -3, pack_label: "Trio Pack", unit_count: 3, pack_price: 11999, free_shipping: 1 },
-                            ]).map((pack, index) => {
-                                const count = pack.unit_count || (index + 1);
-                                return (
-                                    <button
-                                        class:list={[
-                                            "pack-option group relative overflow-hidden border-2 rounded-xl flex flex-col items-center justify-between p-2 sm:p-2.5 transition-all cursor-pointer min-h-[94px] sm:min-h-[106px]",
-                                            index === 0 
-                                                ? "bg-blue-50/40 border-[#02274F] text-[#02274F] shadow-sm" 
-                                                : "bg-white border-gray-200/80 hover:border-gray-300 hover:shadow-sm text-gray-800 shadow-2xs"
-                                        ]}
-                                        data-pack-id={pack.id}
-                                        data-qty={pack.unit_count}
-                                        data-label={pack.pack_label}
-                                        data-price={pack.pack_price}
-                                    >
-                                        <!-- Bottle PNG Graphic -->
-                                        <div class="h-11 sm:h-13 w-full flex items-center justify-center my-auto">
-                                            {count === 1 && (
-                                                <div class="flex items-center justify-center">
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="1 Bottle" 
-                                                        class="h-10 sm:h-12 w-auto object-contain pointer-events-none drop-shadow-sm transition-transform duration-200 group-hover:scale-105" 
-                                                        loading="eager"
-                                                    />
-                                                </div>
-                                            )}
-                                            {count === 2 && (
-                                                <div class="flex items-center justify-center -space-x-3 sm:-space-x-3.5">
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="Bottle 1" 
-                                                        class="h-9 sm:h-11 w-auto object-contain pointer-events-none drop-shadow-sm -rotate-3 transition-transform duration-200 group-hover:-translate-x-0.5" 
-                                                        loading="eager"
-                                                    />
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="Bottle 2" 
-                                                        class="h-10 sm:h-12 w-auto object-contain pointer-events-none drop-shadow-md rotate-3 transition-transform duration-200 z-1 group-hover:translate-x-0.5" 
-                                                        loading="eager"
-                                                    />
-                                                </div>
-                                            )}
-                                            {count >= 3 && (
-                                                <div class="flex items-center justify-center -space-x-3.5 sm:-space-x-4">
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="Bottle 1" 
-                                                        class="h-8.5 sm:h-10 w-auto object-contain pointer-events-none drop-shadow-sm -rotate-6 transition-transform duration-200 opacity-90 group-hover:-translate-x-1" 
-                                                        loading="eager"
-                                                    />
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="Bottle 2" 
-                                                        class="h-10 sm:h-12 w-auto object-contain pointer-events-none drop-shadow-md transition-transform duration-200 z-2 group-hover:scale-105" 
-                                                        loading="eager"
-                                                    />
-                                                    <img 
-                                                        src="/images/bottle-swatch.png" 
-                                                        alt="Bottle 3" 
-                                                        class="h-8.5 sm:h-10 w-auto object-contain pointer-events-none drop-shadow-sm rotate-6 transition-transform duration-200 opacity-90 z-1 group-hover:translate-x-1" 
-                                                        loading="eager"
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
+                            (() => {
+                                const packList = (packs.length > 0 ? packs : [
+                                    { id: -1, pack_label: "Single Pack", unit_count: 1, pack_price: price, free_shipping: 1 },
+                                    { id: -2, pack_label: "Duo Pack", unit_count: 2, pack_price: 8499, free_shipping: 1 },
+                                    { id: -3, pack_label: "Trio Pack", unit_count: 3, pack_price: 11999, free_shipping: 1 },
+                                ]);
+                                const singlePrice = packList[0] ? packList[0].pack_price : price;
 
-                                        <!-- Bundle Name Only -->
-                                        <div class="w-full text-center mt-1">
-                                            <span class="font-bold text-[11px] sm:text-xs leading-snug block text-center tracking-tight">
-                                                {pack.pack_label}
-                                            </span>
-                                        </div>
-                                    </button>
-                                );
-                            })
+                                return packList.map((pack, index) => {
+                                    const count = pack.unit_count || (index + 1);
+                                    const savings = Math.round((count * singlePrice) - pack.pack_price);
+
+                                    return (
+                                        <button
+                                            class:list={[
+                                                "pack-option group relative overflow-hidden border-2 rounded-xl flex flex-col items-center justify-between p-2 pt-4 sm:p-2.5 sm:pt-4.5 transition-all cursor-pointer min-h-[102px] sm:min-h-[114px]",
+                                                index === 0 
+                                                    ? "bg-blue-50/40 border-[#02274F] text-[#02274F] shadow-sm" 
+                                                    : "bg-white border-gray-200/80 hover:border-gray-300 hover:shadow-sm text-gray-800 shadow-2xs"
+                                            ]}
+                                            data-pack-id={pack.id}
+                                            data-qty={pack.unit_count}
+                                            data-label={pack.pack_label}
+                                            data-price={pack.pack_price}
+                                        >
+                                            <!-- Top-Right Savings Badge -->
+                                            {savings > 0 && (
+                                                <span class="absolute top-1 right-1 sm:top-1.5 sm:right-1.5 bg-emerald-700 text-white text-[9px] sm:text-[10px] font-extrabold px-1.5 py-0.5 rounded-md shadow-xs leading-none z-10 tracking-tight">
+                                                    Save Rs. {savings.toLocaleString()}
+                                                </span>
+                                            )}
+
+                                            <!-- Bottle PNG Graphic (Separated & Wide Display) -->
+                                            <div class="h-11 sm:h-13 w-full flex items-center justify-center my-auto">
+                                                {count === 1 && (
+                                                    <div class="flex items-center justify-center">
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="1 Bottle" 
+                                                            class="h-10 sm:h-12 w-auto object-contain pointer-events-none drop-shadow-sm transition-transform duration-200 group-hover:scale-105" 
+                                                            loading="eager"
+                                                        />
+                                                    </div>
+                                                )}
+                                                {count === 2 && (
+                                                    <div class="flex items-center justify-center gap-1.5 sm:gap-2.5">
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="Bottle 1" 
+                                                            class="h-9.5 sm:h-11.5 w-auto object-contain pointer-events-none drop-shadow-sm -rotate-6 transition-transform duration-200 group-hover:-translate-x-0.5" 
+                                                            loading="eager"
+                                                        />
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="Bottle 2" 
+                                                            class="h-9.5 sm:h-11.5 w-auto object-contain pointer-events-none drop-shadow-sm rotate-6 transition-transform duration-200 group-hover:translate-x-0.5" 
+                                                            loading="eager"
+                                                        />
+                                                    </div>
+                                                )}
+                                                {count >= 3 && (
+                                                    <div class="flex items-center justify-center gap-0.5 sm:gap-1">
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="Bottle 1" 
+                                                            class="h-8.5 sm:h-10 w-auto object-contain pointer-events-none drop-shadow-sm -rotate-8 transition-transform duration-200 opacity-95 group-hover:-translate-x-0.5" 
+                                                            loading="eager"
+                                                        />
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="Bottle 2" 
+                                                            class="h-10 sm:h-12 w-auto object-contain pointer-events-none drop-shadow-md transition-transform duration-200 z-1 group-hover:scale-105" 
+                                                            loading="eager"
+                                                        />
+                                                        <img 
+                                                            src="/images/bottle-swatch.png" 
+                                                            alt="Bottle 3" 
+                                                            class="h-8.5 sm:h-10 w-auto object-contain pointer-events-none drop-shadow-sm rotate-8 transition-transform duration-200 opacity-95 group-hover:translate-x-0.5" 
+                                                            loading="eager"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <!-- Bundle Name Only -->
+                                            <div class="w-full text-center mt-1">
+                                                <span class="font-bold text-[11px] sm:text-xs leading-snug block text-center tracking-tight">
+                                                    {pack.pack_label}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    );
+                                });
+                            })()
                         }
                     </div>
                 </div>
