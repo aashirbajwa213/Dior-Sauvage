@@ -63,53 +63,17 @@ const isAdmin = Astro.url.pathname.startsWith("/admin");
 		<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin />
 		<link rel="preconnect" href="https://connect.facebook.net" crossorigin />
 
-		<!-- Deferred Google Tag Manager & Meta Pixel -->
+		<!-- Google Tag Manager -->
 		{!disableTracking && (
-		<script is:inline define:vars={{ gtmId: "GTM-NT9BRMJP", pixelId: "1612216799847193" }}>
-			(function () {
-				let loaded = false;
-				function loadTracking() {
-					if (loaded) return;
-					loaded = true;
-					
-					// Load GTM
-					if (gtmId) {
-						const gtmScript = document.createElement('script');
-						gtmScript.async = true;
-						gtmScript.src = `https://www.googletagmanager.com/gtm.js?id=${gtmId}`;
-						document.head.appendChild(gtmScript);
-						window.dataLayer = window.dataLayer || [];
-						window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
-					}
-
-					// Load Meta Pixel
-					if (pixelId) {
-						!function(f,b,e,v,n,t,s)
-						{if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-						n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-						if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-						n.queue=[];t=b.createElement(e);t.async=!0;
-						t.src=v;s=b.getElementsByTagName(e)[0];
-						s.parentNode.insertBefore(t,s)}(window, document,'script',
-						'https://connect.facebook.net/en_US/fbevents.js');
-						window.fbq('init', pixelId);
-						window.fbq('track', 'PageView');
-					}
-				}
-
-				const events = ['pointermove', 'scroll', 'touchstart', 'keydown'];
-				events.forEach(event => window.addEventListener(event, loadTracking, { once: true, passive: true }));
-
-				window.addEventListener('load', () => {
-					if ('requestIdleCallback' in window) {
-						requestIdleCallback(loadTracking, { timeout: 2500 });
-					} else {
-						setTimeout(loadTracking, 1500);
-					}
-				});
-			})();
+		<script is:inline>
+			(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+			new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+			j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+			'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+			})(window,document,'script','dataLayer','GTM-NFGK357J');
 		</script>
 		)}
+		<!-- End Google Tag Manager -->
 
 		<!-- Cloudflare Turnstile -->
 		<script
@@ -126,7 +90,7 @@ const isAdmin = Astro.url.pathname.startsWith("/admin");
 		{!disableTracking && (
 		<noscript
 			><iframe
-				src="https://www.googletagmanager.com/ns.html?id=GTM-NT9BRMJP"
+				src="https://www.googletagmanager.com/ns.html?id=GTM-NFGK357J"
 				height="0"
 				width="0"
 				style="display:none;visibility:hidden"></iframe></noscript
