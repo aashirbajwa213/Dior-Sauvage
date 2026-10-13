@@ -426,8 +426,9 @@ export const server = {
         `,
             };
 
+            let adminEmailResult: any = { data: null, error: null };
             try {
-                const adminEmail = await resend.emails.send(adminEmailPayload);
+                adminEmailResult = await resend.emails.send(adminEmailPayload);
 
                 if (db) {
                     try {
@@ -437,14 +438,14 @@ export const server = {
                         `).bind(
                             "Admin Alert", `#${orderId}`, ADMIN_EMAILS.join(", "), adminEmailPayload.subject, 
                             JSON.stringify(adminEmailPayload), 
-                            adminEmail.data ? JSON.stringify(adminEmail.data) : null, 
-                            adminEmail.error ? JSON.stringify(adminEmail.error) : null
+                            adminEmailResult.data ? JSON.stringify(adminEmailResult.data) : null, 
+                            adminEmailResult.error ? JSON.stringify(adminEmailResult.error) : null
                         ).run();
                     } catch(e) { console.error("Failed to log admin email", e); }
                 }
 
-                if (adminEmail.error) {
-                    console.error("Admin order email warning:", adminEmail.error.message);
+                if (adminEmailResult.error) {
+                    console.error("Admin order email warning:", adminEmailResult.error.message);
                 }
             } catch (emailErr: any) {
                 console.error("Non-fatal admin order notification error:", emailErr?.message);
@@ -462,8 +463,8 @@ export const server = {
                 }
 
                 if (settings.email_placed_enabled !== false) {
-                    const sender = settings.email_sender || 'Gionee Pakistan <no-reply@gionee.com.pk>';
-                    const subjectTpl = settings.email_subject_order_placed || `Order Received: #{order_id} - Gionee Pakistan`;
+                    const sender = settings.email_sender || 'Dior Sauvage <orders@diorsauvage.pk>';
+                    const subjectTpl = settings.email_subject_order_placed || `Order Received: #{order_id} - Dior Sauvage Pakistan`;
                     const subject = subjectTpl.replace(/{order_id}/g, orderId);
 
                     let bodyTpl = settings.email_template_order_placed;
@@ -472,9 +473,9 @@ export const server = {
                         bodyTpl = `
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #eee; border-radius: 8px; overflow: hidden;">
                 <!-- Header -->
-                <div style="background: #ff6b00; padding: 20px; text-align: center;">
-                    <h1 style="color: #ffffff; margin: 0; font-size: 24px;">GIONEE</h1>
-                    <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0; font-size: 14px;">Original Handsfree</p>
+                <div style="background: #02274F; padding: 20px; text-align: center;">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 24px;">DIOR SAUVAGE</h1>
+                    <p style="color: rgba(255,255,255,0.9); margin: 5px 0 0; font-size: 14px;">Eau de Parfum 100ml — Pakistan</p>
                 </div>
 
                 <!-- Content -->
@@ -484,9 +485,9 @@ export const server = {
                     <p style="color: #555; line-height: 1.6;">We have received your order <strong>#{order_id}</strong>. We are getting it ready for you!</p>
 
                     <!-- Important Note -->
-                    <div style="background: #fff8f3; border-left: 4px solid #ff6b00; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                        <p style="color: #d15700; font-weight: 500; margin: 0;">
-                            ℹ️ Please expect an Order Confirmation call from our Team shortly.
+                    <div style="background: #f0f7ff; border-left: 4px solid #02274F; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                        <p style="color: #02274F; font-weight: 500; margin: 0;">
+                            ℹ️ Please expect an Order Confirmation call or WhatsApp message from our Team shortly.
                         </p>
                     </div>
 
@@ -507,7 +508,7 @@ export const server = {
 
                     <div style="margin-top: 20px; text-align: right; border-top: 2px solid #eee; padding-top: 15px;">
                         <p style="margin: 5px 0; color: #666;">Delivery Fee: PKR {shipping}</p>
-                        <p style="margin: 5px 0; font-size: 18px; font-weight: bold; color: #ff6b00;">Total: PKR {total}</p>
+                        <p style="margin: 5px 0; font-size: 18px; font-weight: bold; color: #02274F;">Total: PKR {total}</p>
                     </div>
 
                      <!-- Shipping Address -->
@@ -530,68 +531,68 @@ export const server = {
                                 <a href="https://wa.me/923112390620" style="display: block; background: #25D366; color: white; text-decoration: none; padding: 8px 16px; border-radius: 20px; font-weight: 500; font-size: 14px; white-space: nowrap;">WhatsApp Us</a>
                             </td>
                             <td style="padding: 0 10px;">
-                                <a href="mailto:support@sauvagedior.pk" style="display: block; background: #0f172a; color: white; text-decoration: none; padding: 8px 16px; border-radius: 20px; font-weight: 500; font-size: 14px; white-space: nowrap;">Email Us</a>
+                                <a href="mailto:support@diorsauvage.pk" style="display: block; background: #02274F; color: white; text-decoration: none; padding: 8px 16px; border-radius: 20px; font-weight: 500; font-size: 14px; white-space: nowrap;">Email Us</a>
                             </td>
                         </tr>
                     </table>
 
                     <p style="color: #999; font-size: 12px; margin-top: 20px;">
-                        &copy; {year} <a href="https://sauvagedior.pk" style="color: #0f172a; text-decoration: none;">Dior Sauvage Pakistan</a>. All rights reserved.
+                        &copy; {year} <a href="https://diorsauvage.pk" style="color: #02274F; text-decoration: none;">Dior Sauvage Pakistan</a>. All rights reserved.
                     </p>
                 </div>
             </div>
             `;
-                }
-
-                let whatsappNumber = "923112390620";
-                try {
-                    const settings = await getAllSettings(db);
-                    if (settings.public_whatsapp_number) whatsappNumber = settings.public_whatsapp_number;
-                } catch(e) {}
-
-                const emailHtml = bodyTpl
-                    .replace(/{customer_name}/g, input.customer.name)
-                    .replace(/{order_id}/g, orderId)
-                    .replace(/{items_table}/g, itemsHtml)
-                    .replace(/{subtotal}/g, validatedSubtotal.toLocaleString())
-                    .replace(/{shipping}/g, input.deliveryFee.toLocaleString())
-                    .replace(/{total}/g, input.total.toLocaleString())
-                    .replace(/{address}/g, input.customer.address)
-                    .replace(/{city}/g, input.customer.city)
-                    .replace(/{phone}/g, input.customer.phone)
-                    .replace(/{year}/g, new Date().getFullYear().toString())
-                    .replace(/923112390620/g, whatsappNumber);
-
-                const customerPayload = {
-                    from: sender.includes('@diorsauvage.pk') ? sender : 'Dior Sauvage <contact@diorsauvage.pk>',
-                    to: [input.customer.email],
-                    subject: subject,
-                    html: emailHtml,
-                };
-                
-                try {
-                    const customerEmailResult = await resend.emails.send(customerPayload);
-
-                    if (db) {
-                        try {
-                            await db.prepare(`
-                                INSERT INTO resend_email_logs (type, order_id, recipient, subject, payload, response, error) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                            `).bind(
-                                "Order Placed", `#${orderId}`, input.customer.email, subject, 
-                                JSON.stringify(customerPayload), 
-                                customerEmailResult.data ? JSON.stringify(customerEmailResult.data) : null, 
-                                customerEmailResult.error ? JSON.stringify(customerEmailResult.error) : null
-                            ).run();
-                        } catch(e) { console.error("Failed to log customer email", e); }
                     }
-                } catch (customerEmailErr: any) {
-                    console.error("Non-fatal customer confirmation email error:", customerEmailErr?.message);
+
+                    let whatsappNumber = "923112390620";
+                    try {
+                        const settings = await getAllSettings(db);
+                        if (settings.public_whatsapp_number) whatsappNumber = settings.public_whatsapp_number;
+                    } catch(e) {}
+
+                    const emailHtml = bodyTpl
+                        .replace(/{customer_name}/g, input.customer.name)
+                        .replace(/{order_id}/g, orderId)
+                        .replace(/{items_table}/g, itemsHtml)
+                        .replace(/{subtotal}/g, validatedSubtotal.toLocaleString())
+                        .replace(/{shipping}/g, input.deliveryFee.toLocaleString())
+                        .replace(/{total}/g, input.total.toLocaleString())
+                        .replace(/{address}/g, input.customer.address)
+                        .replace(/{city}/g, input.customer.city)
+                        .replace(/{phone}/g, input.customer.phone)
+                        .replace(/{year}/g, new Date().getFullYear().toString())
+                        .replace(/923112390620/g, whatsappNumber);
+
+                    const customerPayload = {
+                        from: 'Dior Sauvage <orders@diorsauvage.pk>',
+                        to: [input.customer.email],
+                        subject: subject,
+                        html: emailHtml,
+                    };
+                    
+                    try {
+                        const customerEmailResult = await resend.emails.send(customerPayload);
+
+                        if (db) {
+                            try {
+                                await db.prepare(`
+                                    INSERT INTO resend_email_logs (type, order_id, recipient, subject, payload, response, error) 
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                `).bind(
+                                    "Order Placed", `#${orderId}`, input.customer.email, subject, 
+                                    JSON.stringify(customerPayload), 
+                                    customerEmailResult.data ? JSON.stringify(customerEmailResult.data) : null, 
+                                    customerEmailResult.error ? JSON.stringify(customerEmailResult.error) : null
+                                ).run();
+                            } catch(e) { console.error("Failed to log customer email", e); }
+                        }
+                    } catch (customerEmailErr: any) {
+                        console.error("Non-fatal customer confirmation email error:", customerEmailErr?.message);
+                    }
                 }
             }
-            }
 
-            return { ...adminEmail.data, orderId };
+            return { orderId, success: true };
         },
     }),
 
