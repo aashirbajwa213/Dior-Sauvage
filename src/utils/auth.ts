@@ -5,8 +5,8 @@
 
 const SESSION_DURATION_DAYS = 7;
 const DEFAULT_ADMINS = [
-    { email: "altamashb02@gmail.com", password: "Abl24288??" },
-    { email: "admin@gionee.com.pk", password: "Abl24288??" }
+    { email: "admin@diorsauvage.pk", password: "Abl24288??" },
+    { email: "altamashb02@gmail.com", password: "Abl24288??" }
 ];
 
 // ─── Database Setup ──────────────────────────────────────────────────────────
@@ -84,6 +84,12 @@ export async function verifyPassword(password: string, storedHash: string, salt:
 export async function ensureAdminProvisioned(db: any): Promise<void> {
     try {
         await ensureAuthTables(db);
+
+        // Migrate any previous admin email if found
+        try {
+            await db.prepare("UPDATE users SET email = 'admin@diorsauvage.pk' WHERE LOWER(email) = 'admin@gionee.com.pk'").run();
+        } catch (_) {}
+
         for (const admin of DEFAULT_ADMINS) {
             const normalizedEmail = admin.email.toLowerCase().trim();
             const existing = await db.prepare("SELECT id FROM users WHERE LOWER(email) = ?").bind(normalizedEmail).first();
@@ -93,6 +99,12 @@ export async function ensureAdminProvisioned(db: any): Promise<void> {
                 await db.prepare("INSERT INTO users (email, password_hash, salt) VALUES (?, ?, ?)")
                     .bind(normalizedEmail, hash, salt).run();
                 console.log("[Auth] Admin user provisioned:", normalizedEmail);
+            } else {
+                // Ensure password hash is updated if credentials were changed
+                const salt = await generateSalt();
+                const hash = await hashPassword(admin.password, salt);
+                await db.prepare("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?")
+                    .bind(hash, salt, existing.id).run();
             }
         }
     } catch (e) {
