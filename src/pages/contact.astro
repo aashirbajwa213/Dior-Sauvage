@@ -78,10 +78,10 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
                             For batch inquiries & bulk collector orders
                         </p>
                         <a
-                            href="mailto:support@sauvagedior.pk"
+                            href="mailto:contact@diorsauvage.pk"
                             class="font-mono text-lg font-medium text-gray-900 hover:text-brand-orange transition-colors"
                         >
-                            support@sauvagedior.pk
+                            contact@diorsauvage.pk
                         </a>
                     </div>
                 </div>
@@ -130,7 +130,7 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
                             id="email"
                             name="email"
                             class="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-brand-orange focus:border-brand-orange outline-none transition-all"
-                            placeholder="support@gionee.com.pk"
+                            placeholder="your.email@example.com"
                             required
                         />
                     </div>
@@ -169,28 +169,6 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
                             placeholder="How can we help you?"
                             required></textarea>
                     </div>
-                    {/* Turnstile Widget */}
-                    <div
-                        class="cf-turnstile"
-                        data-sitekey={siteKey}
-                        data-response-field-name="turnstileToken"
-                    >
-                    </div>
-                    {/* Fallback for missing key */}
-                    <script
-                        is:inline
-                        define:vars={{
-                            key: siteKey,
-                        }}
-                    >
-                        if (!key) {
-                            console.error("Turnstile Site Key is missing!");
-                            const el = document.querySelector(".cf-turnstile");
-                            if (el)
-                                el.innerHTML =
-                                    '<p class="text-red-500 text-sm">Error: Captcha Configuration Missing (SITE_KEY)</p>';
-                        }
-                    </script>
                     <Button type="submit" id="submit-btn" class="w-full"
                         >Send Message</Button
                     >
@@ -206,15 +184,8 @@ const formattedWhatsapp = `+${whatsappNumber.substring(0, 2)} ${whatsappNumber.s
 
         form?.addEventListener("submit", async (e) => {
             e.preventDefault();
-            const originalText = btn.innerHTML; // Capture up front
+            const originalText = btn.innerHTML;
             const formData = new FormData(form);
-            const token = formData.get("turnstileToken");
-            if (!token) {
-                alert("Please complete the captcha.");
-                btn.disabled = false;
-                // btn.innerHTML = originalText; // It hasn't changed yet, so strictly not needed, but safe.
-                return;
-            }
 
             btn.disabled = true;
             btn.innerHTML = "Sending...";

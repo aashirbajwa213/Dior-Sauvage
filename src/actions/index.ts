@@ -6,7 +6,7 @@ import { AwsClient } from "aws4fetch";
 import { addTimelineEntry } from '../utils/timeline';
 import { getAllSettings } from '../utils/settings';
 
-const ADMIN_EMAILS = ['support@gionee.com.pk', 'aashirblogging@gmail.com']; // Final destinations
+const ADMIN_EMAILS = ['aashirblogging@gmail.com', 'support@diorsauvage.pk']; // Final destinations
 
 // Helper to get Resend instance
 function getResend(context: any) {
@@ -58,20 +58,15 @@ export const server = {
             email: z.string().email(),
             subject: z.string(),
             message: z.string(),
-            turnstileToken: z.string(),
+            turnstileToken: z.string().optional(),
         }),
         handler: async (input, context) => {
             const resend = getResend(context);
-            const turnstileSecret = context.locals?.runtime?.env?.TURNSTILE_SECRET_KEY ||
-                context.locals?.runtime?.env?.SECRET_KEY ||
-                import.meta.env.TURNSTILE_SECRET_KEY ||
-                import.meta.env.SECRET_KEY;
-
-            await verifyTurnstile(input.turnstileToken, turnstileSecret);
 
             const { data, error } = await resend.emails.send({
-                from: 'Gionee Pakistan <contact@gionee.com.pk>',
+                from: 'Dior Sauvage <contact@diorsauvage.pk>',
                 to: ADMIN_EMAILS,
+                replyTo: input.email,
                 subject: `Contact Form: ${input.subject} - from ${input.name}`,
                 html: `
           <h3>New Contact Form Submission</h3>
@@ -79,7 +74,7 @@ export const server = {
           <p><strong>Email:</strong> ${input.email}</p>
           <p><strong>Subject:</strong> ${input.subject}</p>
           <p><strong>Message:</strong></p>
-          <p>${input.message}</p>
+          <p style="white-space: pre-wrap; background: #f9fafb; padding: 12px; border-radius: 8px;">${input.message}</p>
         `,
             });
 

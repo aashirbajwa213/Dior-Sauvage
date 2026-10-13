@@ -91,7 +91,7 @@ export async function getChatbotConfig(db: any, forceFresh: boolean = false): Pr
         toolOrderLookup: true,
         toolCourierTracking: true,
         toolReturnRequest: false,
-        handoverEmail: "support@sauvagedior.pk",
+        handoverEmail: "contact@diorsauvage.pk",
         handoverMessage: "Message our support team on WhatsApp. They will respond to your query at the earliest! If you prefer email, you can submit the form on our Contact page.",
         handoverWhatsapp: "923112390620",
         handoverWhatsappPrefill: "Hello Dior Sauvage Support, I need assistance with my order/query from the store.",
