@@ -172,17 +172,31 @@ export const server = {
             // Sanitize phone number (digits only)
             input.customer.phone = input.customer.phone.replace(/\D/g, "");
 
-            // Generate order ID: GPK{Month}{3-digit sequence}
+            // Fetch settings for order prefix and configurations
+            const db = context.locals?.runtime?.env?.DB;
+            let settings: any = null;
+            if (db) {
+                try {
+                    settings = await getAllSettings(db);
+                } catch (e) {
+                    console.error("Failed to fetch settings during order creation:", e);
+                }
+            }
+
+            // Generate order ID: {order_id_prefix}{Month}{3-digit sequence}
             const pakTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
             const currentMonth = String(pakTime.getMonth() + 1).padStart(2, '0');
-            const orderPrefix = `GPK${currentMonth}`;
+            const basePrefix = (settings?.order_id_prefix || "GPK").trim().toUpperCase();
+            const orderPrefix = `${basePrefix}${currentMonth}`;
             
-            const db = context.locals?.runtime?.env?.DB;
             let orderId = "";
             
             if (db) {
                 try {
-                    const latestOrder = await db.prepare("SELECT id FROM orders WHERE id LIKE ? ORDER BY CAST(SUBSTR(id, 6) AS INTEGER) DESC LIMIT 1").bind(`${orderPrefix}%`).first();
+                    const substrStart = orderPrefix.length + 1;
+                    const latestOrder = await db.prepare(
+                        `SELECT id FROM orders WHERE id LIKE ? ORDER BY CAST(SUBSTR(id, ${substrStart}) AS INTEGER) DESC LIMIT 1`
+                    ).bind(`${orderPrefix}%`).first();
                     let sequence = 1;
                     if (latestOrder && latestOrder.id) {
                         const seqStr = String(latestOrder.id).substring(orderPrefix.length);
@@ -274,9 +288,13 @@ export const server = {
                     let deliveryCharges = 200;
                     let freeShippingThreshold = 0;
                     try {
-                        const settings = await getAllSettings(db);
-                        deliveryCharges = settings.delivery_charges;
-                        freeShippingThreshold = settings.free_shipping_threshold;
+                        if (!settings && db) {
+                            settings = await getAllSettings(db);
+                        }
+                        if (settings) {
+                            deliveryCharges = settings.delivery_charges;
+                            freeShippingThreshold = settings.free_shipping_threshold;
+                        }
                     } catch (e) {
                         console.error("Failed to fetch settings for delivery calculation", e);
                     }

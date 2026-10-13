@@ -41,6 +41,7 @@ gionee-frontend/
 *Token*/
 Media/
 cf-token.txt
+resend-api.txt
 scripts/setup_dior_db.cjs
 
 # database dumps & logs

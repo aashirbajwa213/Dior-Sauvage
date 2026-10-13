@@ -57,6 +57,7 @@ export interface SystemSettings {
     announcement_bar_enabled: string;
     announcement_bar_text: string;
     smart_sticky_header_enabled: string;
+    order_id_prefix: string;
 }
 
 // In-Memory Settings Cache (60s TTL) to cut D1 row reads by 99%
@@ -337,7 +338,8 @@ export async function getAllSettings(db: any, forceFresh: boolean = false): Prom
             current_monthly_ad_spend: parseInt(settingsMap['current_monthly_ad_spend'] || '0', 10),
             announcement_bar_enabled: settingsMap['announcement_bar_enabled'] || '0',
             announcement_bar_text: settingsMap['announcement_bar_text'] || 'Orders after 5:00 PM, 25 May 2026 will be shipped after Eid holidays. Thank you!',
-            smart_sticky_header_enabled: settingsMap['smart_sticky_header_enabled'] || '1'
+            smart_sticky_header_enabled: settingsMap['smart_sticky_header_enabled'] || '1',
+            order_id_prefix: (settingsMap['order_id_prefix'] || 'GPK').trim().toUpperCase()
         };
 
         // Cache in memory
