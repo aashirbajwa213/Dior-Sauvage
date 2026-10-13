@@ -6,16 +6,24 @@ import { getAllSettings } from "../utils/settings";
 const db = Astro.locals.runtime?.env?.DB;
 
 let whatsappNumber = "923112390620";
+let orderPrefix = "GPK";
+
 if (db) {
     try {
         const settings = await getAllSettings(db);
         if (settings.public_whatsapp_number) {
             whatsappNumber = settings.public_whatsapp_number;
         }
+        if (settings.order_id_prefix) {
+            orderPrefix = settings.order_id_prefix.trim().toUpperCase();
+        }
     } catch (e) {
         console.error("Failed to load settings in Track Order Page", e);
     }
 }
+
+const sampleMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+const sampleOrderId = `${orderPrefix}${sampleMonth}001`;
 
 
 let searchQuery = Astro.url.searchParams.get("q")?.trim() || "";
@@ -123,7 +131,7 @@ function getStatusBadgeClass(status: string) {
                                     id="q"
                                     value={searchQuery}
                                     required
-                                    placeholder="e.g. GPK09055 or SA7535349204"
+                                    placeholder={`e.g. ${sampleOrderId} or SA7535349204`}
                                     class="block w-full pl-11 pr-4 py-3.5 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-orange/20 focus:border-brand-orange text-sm font-normal transition-all duration-200"
                                 />
                             </div>
@@ -227,7 +235,7 @@ function getStatusBadgeClass(status: string) {
                     <div class="space-y-3.5 text-xs text-gray-600 leading-relaxed font-normal">
                         <div>
                             <p class="text-gray-900 font-semibold mb-1">Where is my Order ID?</p>
-                            <p>You can find your Order ID (e.g., GPK05001) in the confirmation email or WhatsApp message sent to you right after placing your order.</p>
+                            <p>You can find your Order ID (e.g., {sampleOrderId}) in the confirmation email or WhatsApp message sent to you right after placing your order.</p>
                         </div>
                         <div class="pt-3.5 border-t border-gray-200">
                             <p class="text-gray-900 font-semibold mb-1">Automatic Tracking ID</p>

@@ -164,9 +164,10 @@ if (!db) {
                 if (!orderId) {
                     const pakTime = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" }));
                     const currentMonth = String(pakTime.getMonth() + 1).padStart(2, '0');
-                    const orderPrefix = `GPK${currentMonth}`;
+                    const basePrefix = (courierSettings?.order_id_prefix || "GPK").trim().toUpperCase();
+                    const orderPrefix = `${basePrefix}${currentMonth}`;
                     try {
-                        const latestOrder = await db.prepare("SELECT id FROM orders WHERE id LIKE ? ORDER BY CAST(SUBSTR(id, 6) AS INTEGER) DESC LIMIT 1").bind(`${orderPrefix}%`).first();
+                        const latestOrder = await db.prepare(`SELECT id FROM orders WHERE id LIKE ? ORDER BY CAST(SUBSTR(id, ${orderPrefix.length + 1}) AS INTEGER) DESC LIMIT 1`).bind(`${orderPrefix}%`).first();
                         let sequence = 1;
                         if (latestOrder && latestOrder.id) {
                             const seqStr = String(latestOrder.id).substring(orderPrefix.length);
@@ -966,7 +967,7 @@ function getHealthBadgeStyles(score: number | null | undefined, riskLevel: strin
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Order ID</label>
-                        <input type="text" name="order_id" placeholder="Auto-generated (e.g. GPK09083)" readonly class="w-full px-3 py-2 border border-gray-200 bg-gray-50 text-gray-500 font-mono rounded-lg focus:outline-none text-xs sm:text-sm cursor-not-allowed" title="Order ID is auto-generated to maintain sequence" />
+                        <input type="text" name="order_id" placeholder={`Auto-generated (e.g. ${(courierSettings?.order_id_prefix || "GPK").trim().toUpperCase()}${String(new Date().getMonth() + 1).padStart(2, '0')}083)`} readonly class="w-full px-3 py-2 border border-gray-200 bg-gray-50 text-gray-500 font-mono rounded-lg focus:outline-none text-xs sm:text-sm cursor-not-allowed" title="Order ID is auto-generated to maintain sequence" />
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-gray-700 uppercase mb-1">Date & Time (PKT)</label>
