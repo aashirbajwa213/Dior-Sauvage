@@ -10,10 +10,10 @@ const { label, value, isLast = false } = Astro.props;
 
 <div
     class:list={[
-        "flex justify-between py-3 border-b border-gray-100",
+        "flex justify-between items-start gap-3 sm:gap-6 py-2.5 sm:py-3 border-b border-gray-100",
         isLast && "border-b-0",
     ]}
 >
-    <span class="text-gray-600 font-medium text-sm">{label}</span>
-    <span class="text-gray-900 text-sm">{value}</span>
+    <span class="text-gray-500 font-medium text-xs sm:text-sm shrink-0 whitespace-nowrap leading-relaxed">{label}</span>
+    <span class="text-gray-900 font-medium text-xs sm:text-sm text-right leading-relaxed break-words">{value}</span>
 </div>
